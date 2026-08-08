@@ -23,82 +23,134 @@ import Projector from '../systems/Projector.jsx';
 import HUD from '../ui/HUD.jsx';
 
 // ---- tuning (PROVISIONAL) ----
-const SEG = 600; // frenet-frame resolution
-const RAIL_SPEED = 0.16; // progress per second (fast grind)
+const SEG = 1400; // frenet-frame resolution (higher for the longer curve)
+const RAIL_SPEED = 0.05; // progress per second — ~3x the old rail length in time (~20s)
 const ROT_SPEED = 3.4; // radians / second around the rail
 const PLAYER_R = 1.3; // player orbits ON the rail's surface, around its axis
 const RAIL_CORE_R = 0.32; // thickness of the rail itself (a thin central beam)
 const CAM_R = PLAYER_R + 3.0; // camera sits OUTSIDE the player — over-the-shoulder
-const CAM_BACK = 0.045; // how far behind the player (in progress units) the camera sits
+const CAM_BACK = 0.014; // how far behind the player (in progress units) the camera sits
 const COLLIDE_ANGLE = 0.55; // angular tolerance for an orb collision (rad)
-const AIM_WINDOW_T = 0.14; // how far ahead the primary Shatter target may be
+const AIM_WINDOW_T = 0.045; // how far ahead the primary Shatter target may be
 const AIM_CONE = 0.8; // angular cone for primary target selection
-const REPEAT_WINDOW_T = 0.24; // Hyperfocus repeat reaches further down the rail
-const EXIT_T = 0.985; // reaching here enters the second sphere
+const REPEAT_WINDOW_T = 0.075; // Hyperfocus repeat reaches further down the rail
+const EXIT_T = 0.99; // reaching here enters the second sphere
 
 const HOTKEYS = { shatter: 'SPACE', hyperfocus: 'SHIFT' };
 
 // Handcrafted rail curve (doc §35: no procedural generation yet).
+// ~3x the previous length, with more dramatic climbs, dives and switchbacks.
 const CURVE_POINTS = [
   [0, 0, 0],
-  [0, 1.5, -16],
-  [6, 3, -32],
-  [3, 6.5, -50],
-  [-6, 5, -68],
-  [-3, 9, -88],
-  [5, 7, -108],
-  [1, 5, -128],
-  [0, 4, -146],
+  [0, 2, -18],
+  [7, 4, -36],
+  [4, 9, -56],
+  [-6, 7, -76],
+  [-11, 11, -98],
+  [-3, 15, -120],
+  [7, 13, -142],
+  [13, 7, -164],
+  [8, 2, -188],
+  [-4, 4, -212],
+  [-13, 9, -236],
+  [-9, 16, -260],
+  [3, 14, -284],
+  [12, 9, -308],
+  [7, 3, -332],
+  [-5, 6, -356],
+  [-13, 13, -380],
+  [-6, 17, -404],
+  [5, 13, -428],
+  [11, 7, -452],
+  [4, 3, -476],
+  [-3, 5, -500],
+  [0, 3, -522],
 ];
 
 function angDiff(a, b) {
   return Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
 }
 
+// Current angular position of an orb given its motion type and the clock.
+// (theta0 is the base angle; collision/aim read the live orb.theta we update.)
+function orbThetaAt(orb, time) {
+  const m = orb.motion;
+  if (!m || m.type === 'static') return orb.theta0;
+  if (m.type === 'orbit') return orb.theta0 + m.speed * time; // rotates around the rail
+  if (m.type === 'wave') return orb.theta0 + m.amp * Math.sin(time * m.freq + orb.phase); // weaves
+  return orb.theta0;
+}
+
 // ---------------------------------------------------------------------------
 // Orb formations (doc §22-§23). Lines usually share a Status type so the player
-// can read consequences ahead of time.
+// can read consequences ahead of time. Different formations move differently:
+// static walls, slow orbits, weaving waves, spirals, big double orbs, a rotating
+// ring, and a dense finale band.
 // ---------------------------------------------------------------------------
 // Empty stretch of rail at the very start so the player can settle into the
 // controls before the first orbs arrive (nothing spawns before this progress).
-const RUNWAY_T = 0.22;
+const RUNWAY_T = 0.06;
 
 function buildFormations() {
   const orbs = [];
   let id = 0;
-  const line = (tStart, tEnd, count, theta, statusId, amount = 1) => {
-    for (let i = 0; i < count; i++) {
-      const t = count === 1 ? tStart : tStart + ((tEnd - tStart) * i) / (count - 1);
-      orbs.push({ id: id++, t, theta, statusId, amount });
-    }
-  };
-
-  // --- runway: 0 .. RUNWAY_T is intentionally empty ---
-
-  // Early: a readable Focus line (top up Focus) — safe to take.
-  line(RUNWAY_T + 0.0, RUNWAY_T + 0.06, 3, 0.4, 'focus');
-  // A short Anxiety line — the "raise Anxiety to MEDIUM to enable Hyperfocus"
-  // opportunity (doc §23). Player may take these on purpose.
-  line(RUNWAY_T + 0.12, RUNWAY_T + 0.18, 3, 2.2, 'anxiety');
-  // Calm reward line, offset to the other side.
-  line(RUNWAY_T + 0.24, RUNWAY_T + 0.3, 3, 4.2, 'calm');
-  // A scattered Anxiety wall — genuinely wants dodging when your bar is high.
-  line(RUNWAY_T + 0.38, RUNWAY_T + 0.38, 1, 0.2, 'anxiety');
-  line(RUNWAY_T + 0.4, RUNWAY_T + 0.4, 1, 1.6, 'anxiety');
-  line(RUNWAY_T + 0.42, RUNWAY_T + 0.42, 1, 3.4, 'anxiety');
-  line(RUNWAY_T + 0.44, RUNWAY_T + 0.44, 1, 5.0, 'anxiety');
-  // Focus refresh before the finale.
-  line(RUNWAY_T + 0.5, RUNWAY_T + 0.54, 2, 5.6, 'focus');
-  // The finale STREAM: a dense band of Anxiety orbs spread across many angles.
-  // Dodging all is hard; Hyperfocus + Shatter clears the whole band (doc §24).
-  for (let i = 0; i < 10; i++) {
+  const push = (t, theta, statusId, opts = {}) => {
     orbs.push({
       id: id++,
-      t: RUNWAY_T + 0.6 + i * 0.012,
-      theta: (i / 10) * Math.PI * 2,
-      statusId: 'anxiety',
-      amount: 1,
+      t,
+      theta0: theta,
+      theta, // live angle (updated per frame for moving orbs)
+      statusId,
+      amount: opts.amount ?? 1,
+      size: opts.size ?? 1,
+      motion: opts.motion ?? { type: 'static' },
+      phase: opts.phase ?? 0,
     });
+  };
+  // A line of `n` orbs from t0..t1, optionally fanning theta / phase per orb.
+  const line = (t0, t1, n, theta, statusId, opts = {}) => {
+    for (let i = 0; i < n; i++) {
+      const t = n === 1 ? t0 : t0 + ((t1 - t0) * i) / (n - 1);
+      push(t, theta + (opts.thetaStep ?? 0) * i, statusId, {
+        ...opts,
+        phase: (opts.phase ?? 0) + (opts.phaseStep ?? 0) * i,
+      });
+    }
+  };
+  const R = RUNWAY_T;
+
+  // 1. Focus intro — static, readable, safe to take.
+  line(R + 0.0, R + 0.04, 3, 0.4, 'focus');
+  // 2. Short Anxiety line — the raise-to-MEDIUM-for-Hyperfocus chance (doc §23).
+  line(R + 0.08, R + 0.12, 3, 2.2, 'anxiety');
+  // 3. Calm cluster that slowly ORBITS the rail — track it to collect.
+  line(R + 0.16, R + 0.19, 3, 4.0, 'calm', { motion: { type: 'orbit', speed: 0.7 } });
+  // 4. Anxiety WEAVE — orbs wave side to side; timing matters.
+  line(R + 0.23, R + 0.31, 5, 0.0, 'anxiety', {
+    motion: { type: 'wave', amp: 1.4, freq: 1.6 },
+    phaseStep: 0.7,
+  });
+  // 5. Focus refresh, two opposite sides (static).
+  line(R + 0.34, R + 0.36, 1, 1.0, 'focus');
+  line(R + 0.34, R + 0.36, 1, 1.0 + Math.PI, 'focus');
+  // 6. Anxiety SPIRAL — angle winds around as it advances.
+  line(R + 0.4, R + 0.5, 9, 0.0, 'anxiety', { thetaStep: 0.7 });
+  // 7. Big double-Anxiety orbs (amount 2) — punishing to eat, tempting to Shatter.
+  line(R + 0.54, R + 0.57, 2, 3.0, 'anxiety', { amount: 2, size: 1.6 });
+  // 8. Rotating full RING of Anxiety — thread the gap or Shatter through it.
+  line(R + 0.6, R + 0.6, 6, 0, 'anxiety', {
+    thetaStep: (Math.PI * 2) / 6,
+    motion: { type: 'orbit', speed: 1.2 },
+  });
+  // 9. Calm reward that weaves — a moving payoff.
+  line(R + 0.66, R + 0.72, 4, 4.5, 'calm', {
+    motion: { type: 'wave', amp: 1.1, freq: 2.0 },
+    phaseStep: 0.8,
+  });
+  // 10. Finale: dense Anxiety band across every angle. Dodging all is hard;
+  //     Hyperfocus + Shatter clears the whole stream (doc §24).
+  for (let i = 0; i < 14; i++) {
+    push(R + 0.78 + i * 0.008, (i / 14) * Math.PI * 2, 'anxiety');
   }
 
   return orbs;
@@ -137,7 +189,7 @@ function RailWorld({ heldKeys, playerStateRef, playerWorldRef, orbs, curveData, 
     [frameAt],
   );
 
-  // Precompute orb world positions once (orbs are static on the rail).
+  // Initialize each orb's world position (recomputed every frame for movers).
   const tmpDir = useMemo(() => new THREE.Vector3(), []);
   useMemo(() => {
     for (const orb of orbs) {
@@ -153,6 +205,8 @@ function RailWorld({ heldKeys, playerStateRef, playerWorldRef, orbs, curveData, 
   const vPlayer = useMemo(() => new THREE.Vector3(), []);
   const vCam = useMemo(() => new THREE.Vector3(), []);
   const vLook = useMemo(() => new THREE.Vector3(), []);
+  const vOrbC = useMemo(() => new THREE.Vector3(), []);
+  const vOrbD = useMemo(() => new THREE.Vector3(), []);
 
   useFrame((state, dtRaw) => {
     const dt = Math.min(dtRaw, 0.05); // clamp big frame gaps
@@ -186,11 +240,22 @@ function RailWorld({ heldKeys, playerStateRef, playerWorldRef, orbs, curveData, 
     vCam.copy(vCenter).add(vDir);
     state.camera.position.lerp(vCam, 1 - Math.pow(0.0008, dt));
 
-    const lookT = Math.min(1, ps.t + 0.06);
+    const lookT = Math.min(1, ps.t + 0.017);
     curve.getPointAt(lookT, vCenter);
     offsetDir(lookT, ps.theta, vDir).multiplyScalar(PLAYER_R);
     vLook.copy(vCenter).add(vDir);
     state.camera.lookAt(vLook);
+
+    // --- move orbs: update live angle + world position for this frame ---
+    const time = state.clock.elapsedTime;
+    for (const orb of orbs) {
+      if (orb.consumed) continue;
+      orb.theta = orbThetaAt(orb, time);
+      curve.getPointAt(orb.t, vOrbC);
+      offsetDir(orb.t, orb.theta, vOrbD).multiplyScalar(PLAYER_R);
+      orb.pos.copy(vOrbC).add(vOrbD);
+      if (orb.ref?.current) orb.ref.current.position.copy(orb.pos);
+    }
 
     // --- collisions: orb crossed this frame within the angular tolerance ---
     for (const orb of orbs) {
@@ -206,7 +271,7 @@ function RailWorld({ heldKeys, playerStateRef, playerWorldRef, orbs, curveData, 
         }
       }
       // Hide orbs that have fallen well behind the camera.
-      if (orb.ref?.current && orb.t < ps.t - 0.03) orb.ref.current.visible = false;
+      if (orb.ref?.current && orb.t < ps.t - 0.012) orb.ref.current.visible = false;
     }
     prevTRef.current = ps.t;
 
@@ -310,11 +375,11 @@ function pickRepeatTargets(orbs, ps) {
 function Rail({ curveData }) {
   const { curve } = curveData;
   const geo = useMemo(
-    () => new THREE.TubeGeometry(curve, 500, RAIL_CORE_R, 10, false),
+    () => new THREE.TubeGeometry(curve, 1100, RAIL_CORE_R, 10, false),
     [curve],
   );
   const glowGeo = useMemo(
-    () => new THREE.TubeGeometry(curve, 500, RAIL_CORE_R * 2.2, 10, false),
+    () => new THREE.TubeGeometry(curve, 1100, RAIL_CORE_R * 2.2, 10, false),
     [curve],
   );
   return (
@@ -339,16 +404,16 @@ function Rail({ curveData }) {
 // "tunnel-like dimension" without boxing the player inside anything.
 function StarField() {
   const geo = useMemo(() => {
-    const N = 900;
+    const N = 2200;
     const pos = new Float32Array(N * 3);
     const col = new Float32Array(N * 3);
     const c = new THREE.Color();
     for (let i = 0; i < N; i++) {
-      const r = 6 + Math.random() * 26;
+      const r = 6 + Math.random() * 30;
       const a = Math.random() * Math.PI * 2;
-      pos[i * 3] = Math.cos(a) * r + (Math.random() - 0.5) * 10;
-      pos[i * 3 + 1] = Math.sin(a) * r + (Math.random() - 0.5) * 10;
-      pos[i * 3 + 2] = 5 - Math.random() * 165;
+      pos[i * 3] = Math.cos(a) * r + (Math.random() - 0.5) * 14;
+      pos[i * 3 + 1] = Math.sin(a) * r + (Math.random() - 0.5) * 14;
+      pos[i * 3 + 2] = 10 - Math.random() * 545; // span the full (longer) rail
       c.setHSL((Math.random() * 0.35 + 0.58) % 1, 0.75, 0.62);
       col[i * 3] = c.r;
       col[i * 3 + 1] = c.g;
@@ -368,27 +433,36 @@ function StarField() {
 
 function Orb({ orb }) {
   const def = STATUS_DEFS[orb.statusId];
+  const moving = orb.motion && orb.motion.type !== 'static';
   const ref = useRef();
   orb.ref = ref;
+  // Position is driven by the RailWorld frame loop; here we just spin + pulse.
   useFrame((s) => {
     if (ref.current && ref.current.visible) {
-      ref.current.rotation.y += 0.03;
+      ref.current.rotation.y += moving ? 0.05 : 0.03;
       const p = 1 + Math.sin(s.clock.elapsedTime * 4 + orb.id) * 0.08;
-      ref.current.scale.setScalar(p);
+      ref.current.scale.setScalar(orb.size * p);
     }
   });
   return (
     <group ref={ref} position={orb.pos ? orb.pos.toArray() : [0, 0, 0]}>
       <mesh>
-        <icosahedronGeometry args={[0.42, 1]} />
+        <icosahedronGeometry args={[0.42, moving ? 0 : 1]} />
         <meshStandardMaterial
           color={def.color}
           emissive={def.color}
-          emissiveIntensity={0.9}
+          emissiveIntensity={moving ? 1.15 : 0.9}
           transparent
-          opacity={0.92}
+          opacity={0.94}
+          flatShading={moving}
         />
       </mesh>
+      {orb.amount > 1 && (
+        <mesh>
+          <icosahedronGeometry args={[0.58, 0]} />
+          <meshBasicMaterial color={def.color} wireframe transparent opacity={0.5} />
+        </mesh>
+      )}
     </group>
   );
 }
