@@ -124,12 +124,19 @@ function AbilityBar({ onActivate, hotkeys }) {
 function Feed() {
   const feed = useGameStore((s) => s.feed);
   const expireFeed = useGameStore((s) => s.expireFeed);
+  const scheduled = React.useRef(new Set());
 
-  // Auto-expire each toast.
+  // Give each toast exactly ONE expiry timer from its own birth, so a burst of
+  // popups doesn't keep extending the ones already fading.
   useEffect(() => {
-    if (feed.length === 0) return;
-    const timers = feed.map((f) => setTimeout(() => expireFeed(f.id), 1600));
-    return () => timers.forEach(clearTimeout);
+    feed.forEach((f) => {
+      if (scheduled.current.has(f.id)) return;
+      scheduled.current.add(f.id);
+      setTimeout(() => {
+        expireFeed(f.id);
+        scheduled.current.delete(f.id);
+      }, 950);
+    });
   }, [feed, expireFeed]);
 
   return (
@@ -138,7 +145,7 @@ function Feed() {
         let cls = f.kind;
         if (f.kind === 'status') cls += f.detrimental ? ' detri' : ' bene';
         return (
-          <div key={f.id} className={`feed-item ${cls}`}>
+          <div key={f.id} className={`feed-item ${cls}`} style={{ marginLeft: f.dx ?? 0 }}>
             {f.text}
           </div>
         );

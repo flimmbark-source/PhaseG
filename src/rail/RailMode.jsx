@@ -22,7 +22,7 @@ import HUD from '../ui/HUD.jsx';
 
 // ---- tuning (PROVISIONAL) ----
 const SEG = 600; // frenet-frame resolution
-const RAIL_SPEED = 0.06; // progress per second (~2x+ the old grind, ~17s traversal)
+const RAIL_SPEED = 0.16; // progress per second (fast grind)
 const ROT_SPEED = 3.4; // radians / second around the rail
 const PLAYER_R = 1.3; // player orbits ON the rail's surface, around its axis
 const RAIL_CORE_R = 0.32; // thickness of the rail itself (a thin central beam)
@@ -156,8 +156,8 @@ function RailWorld({ heldKeys, playerStateRef, orbs, curveData, onCollide, onRea
 
     // --- rotate around the rail ---
     const k = heldKeys.current;
-    if (k['a'] || k['arrowleft']) ps.theta += ROT_SPEED * dt;
-    if (k['d'] || k['arrowright']) ps.theta -= ROT_SPEED * dt;
+    if (k['a'] || k['arrowleft']) ps.theta -= ROT_SPEED * dt;
+    if (k['d'] || k['arrowright']) ps.theta += ROT_SPEED * dt;
 
     // --- place player ---
     curve.getPointAt(ps.t, vCenter);

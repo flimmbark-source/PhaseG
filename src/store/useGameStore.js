@@ -21,7 +21,12 @@ const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Da
 
 /** Push a transient feedback item (status change, discovery, note). */
 function makeFeed(kind, text, extra = {}) {
-  return { id: ++feedSeq, kind, text, t: nowMs(), ...extra };
+  // dx: a little horizontal scatter so popups feel like arcade text rather than
+  // a boring centered stack. Discovery/note kinds stay put (dx 0).
+  const dx = kind === 'status' || kind === 'overflow' || kind === 'ability'
+    ? Math.round((Math.random() * 2 - 1) * 150)
+    : 0;
+  return { id: ++feedSeq, kind, text, t: nowMs(), dx, ...extra };
 }
 
 export const useGameStore = create((set, get) => ({
