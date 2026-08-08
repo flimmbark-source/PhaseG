@@ -18,6 +18,8 @@ import * as THREE from 'three';
 import { useGameStore } from '../store/useGameStore.js';
 import { STATUS_DEFS } from '../data/statuses.js';
 import { useKeys } from '../systems/useKeys.js';
+import { projectToScreen } from '../systems/screenProject.js';
+import Projector from '../systems/Projector.jsx';
 import HUD from '../ui/HUD.jsx';
 
 // ---- tuning (PROVISIONAL) ----
@@ -239,6 +241,7 @@ function RailWorld({ heldKeys, playerStateRef, orbs, curveData, onCollide, onRea
       <ambientLight intensity={0.6} />
       <pointLight position={[0, 6, -20]} intensity={60} distance={80} color="#b98bff" />
 
+      <Projector />
       <Rail curveData={curveData} />
       <StarField />
 
@@ -423,9 +426,8 @@ export default function RailMode() {
 
   const onCollide = useCallback(
     (orb) => {
-      const def = STATUS_DEFS[orb.statusId];
-      const delta = def.detrimental ? orb.amount : orb.amount;
-      applyStatus(orb.statusId, delta);
+      // Popup appears over the orb that was hit; a number also chips off the bar.
+      applyStatus(orb.statusId, orb.amount, { source: orb.pos ? projectToScreen(orb.pos) : null });
     },
     [applyStatus],
   );

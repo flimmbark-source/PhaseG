@@ -23,13 +23,9 @@ const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Da
 
 /** Push a transient feedback item (status change, discovery, note). */
 function makeFeed(kind, text, extra = {}) {
-  // Scatter arcade popups across most of the screen (percent of viewport).
-  // Notes/discovery are informational, so they stay in a readable upper-center
-  // band instead of flying to the corners.
-  const scatter = kind === 'status' || kind === 'overflow' || kind === 'ability';
-  const px = scatter ? 12 + Math.random() * 76 : 50; // 12%..88% horizontally
-  const py = scatter ? 20 + Math.random() * 58 : 24; // 20%..78% vertically
-  return { id: ++feedSeq, kind, text, t: nowMs(), px, py, ...extra };
+  // Position now comes from an `anchor` in `extra` (world object or bar); notes/
+  // discovery/ability without an anchor fall back to a readable upper band.
+  return { id: ++feedSeq, kind, text, t: nowMs(), ...extra };
 }
 
 export const useGameStore = create((set, get) => ({
@@ -48,6 +44,7 @@ export const useGameStore = create((set, get) => ({
 
   // ---- UI feedback ----------------------------------------------------------
   feed: [], // transient toasts (status changes, discoveries)
+  shudder: {}, // bar id ('hp'|statusId) -> incrementing counter (drives bar shake)
   compendiumOpen: false,
   lastDiscovery: null, // { id, at } for the big NEW ABILITY banner
 
@@ -68,17 +65,31 @@ export const useGameStore = create((set, get) => ({
   // =========================================================================
   // Feedback plumbing
   // =========================================================================
-  // Popups are staggered: if several are pushed at once, they don't all pop on
-  // top of each other — each appears FEED_STAGGER_MS after the previous one.
-  pushFeed: (kind, text, extra) => {
-    const item = makeFeed(kind, text, extra);
+  // Schedule a BURST of popups. Separate events are staggered FEED_STAGGER_MS
+  // apart so they don't pile up, but every item in one burst lands together
+  // (e.g. a status change shows its over-object ghost AND its bar-chip number at
+  // the same instant). Items carrying a `shudder` target shake that bar as they
+  // land, kept in sync with the staggered appearance.
+  _scheduleFeed: (items) => {
+    if (!items.length) return;
     const now = nowMs();
     const delay = Math.max(0, feedNextSlot - now);
     feedNextSlot = Math.max(now, feedNextSlot) + FEED_STAGGER_MS;
-    const commit = () => set((s) => ({ feed: [...s.feed, item].slice(-8) }));
+    const commit = () =>
+      set((s) => {
+        let feed = s.feed;
+        let shudder = s.shudder;
+        for (const item of items) {
+          feed = [...feed, item].slice(-8);
+          if (item.shudder) shudder = { ...shudder, [item.shudder]: (shudder[item.shudder] ?? 0) + 1 };
+        }
+        return { feed, shudder };
+      });
     if (delay <= 0) commit();
     else setTimeout(commit, delay);
   },
+
+  pushFeed: (kind, text, extra) => get()._scheduleFeed([makeFeed(kind, text, extra)]),
 
   expireFeed: (id) => set((s) => ({ feed: s.feed.filter((f) => f.id !== id) })),
 
@@ -97,18 +108,36 @@ export const useGameStore = create((set, get) => ({
 
     set({ statuses: nextStatuses, hp: nextHp });
 
-    // Feedback: show the actual applied change + any overflow damage.
+    // Feedback for one status event, landing together:
+    //  (A) a labeled ghost OVER the world object that generated it, and
+    //  (B) a bare number chipping off the relevant status bar (which shudders).
+    // With no world source, only the bar chip shows.
+    const items = [];
     if (!opts.silent && delta !== 0) {
-      const applied = nextValue - current;
       const sign = delta > 0 ? '+' : '';
-      get().pushFeed('status', `${def.label} ${sign}${delta}`, {
-        statusId: id,
-        detrimental: def.detrimental,
-      });
+      if (opts.source) {
+        items.push(
+          makeFeed('status', `${def.label} ${sign}${delta}`, {
+            detrimental: def.detrimental,
+            anchor: { type: 'screen', xPct: opts.source.xPct, yPct: opts.source.yPct },
+          }),
+        );
+      }
+      items.push(
+        makeFeed('status', `${sign}${delta}`, {
+          detrimental: def.detrimental,
+          anchor: { type: 'bar', which: id },
+          shudder: id,
+        }),
+      );
     }
+    // HP damage from overflow chips a number off the HP bar, which shudders.
     if (hpDamage > 0) {
-      get().pushFeed('overflow', `${def.label} overflow — HP -${hpDamage}`, { statusId: id });
+      items.push(
+        makeFeed('overflow', `-${hpDamage}`, { anchor: { type: 'bar', which: 'hp' }, shudder: 'hp' }),
+      );
     }
+    get()._scheduleFeed(items);
 
     // Any status change can reveal a hidden ability (doc §10).
     get()._checkDiscoveries();
@@ -238,6 +267,7 @@ export const useGameStore = create((set, get) => ({
       currentScene: 'grove',
       transitioning: false,
       feed: [],
+      shudder: {},
       lastDiscovery: null,
       // knownAbilities intentionally preserved (Compendium persistence).
     }),

@@ -4,25 +4,44 @@
 // (known/usable/cooldown), feedback toasts, discovery banner, compendium.
 // ---------------------------------------------------------------------------
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useGameStore } from '../store/useGameStore.js';
 import { STATUS_DEFS, STATUS_ORDER } from '../data/statuses.js';
 import { ABILITY_DEFS, ABILITY_ORDER } from '../data/abilities.js';
 import { thresholdOf } from '../systems/statusSystem.js';
 import { requirementsMet } from '../systems/abilitySystem.js';
+import { registerBar, getBarRect } from '../systems/barAnchors.js';
 import Compendium from './Compendium.jsx';
+
+// Drive per-bar shudder: when the store's shudder counter for `id` ticks up,
+// return true for ~600ms so the bar can shake.
+function useShudder(id) {
+  const count = useGameStore((s) => s.shudder[id] ?? 0);
+  const prev = useRef(count);
+  const [shaking, setShaking] = useState(false);
+  useEffect(() => {
+    if (count !== prev.current) {
+      prev.current = count;
+      setShaking(true);
+      const t = setTimeout(() => setShaking(false), 600);
+      return () => clearTimeout(t);
+    }
+  }, [count]);
+  return shaking;
+}
 
 function Vitals() {
   const hp = useGameStore((s) => s.hp);
   const hpMax = useGameStore((s) => s.hpMax);
   const statuses = useGameStore((s) => s.statuses);
+  const hpShaking = useShudder('hp');
 
   return (
     <div className="hud-vitals">
       <div className="panel">
         <div className="hp-row">
           <span className="hp-label">HP</span>
-          <div className="bar">
+          <div className={`bar ${hpShaking ? 'shudder' : ''}`} ref={(el) => registerBar('hp', el)}>
             <div
               className="bar-fill"
               style={{ background: 'var(--hp)', transform: `scaleX(${Math.max(0, hp / hpMax)})` }}
@@ -35,31 +54,35 @@ function Vitals() {
       </div>
 
       <div className="panel" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {STATUS_ORDER.map((id) => {
-          const def = STATUS_DEFS[id];
-          const value = statuses[id] ?? 0;
-          const thr = thresholdOf(def, value);
-          const full = value >= def.max;
-          return (
-            <div key={id} className="status-row">
-              <span className="status-name" style={{ color: def.color }}>
-                {def.label}
-              </span>
-              <div className="bar">
-                <div
-                  className="bar-fill"
-                  style={{ background: def.color, transform: `scaleX(${value / def.max})` }}
-                />
-              </div>
-              <span className="bar-num">
-                {value}/{def.max}
-              </span>
-              <span className={`status-thresh ${thr}`}>{thr}</span>
-              {full && def.detrimental && <span className="status-full">FULL!</span>}
-            </div>
-          );
-        })}
+        {STATUS_ORDER.map((id) => (
+          <StatusRow key={id} id={id} value={statuses[id] ?? 0} />
+        ))}
       </div>
+    </div>
+  );
+}
+
+function StatusRow({ id, value }) {
+  const def = STATUS_DEFS[id];
+  const thr = thresholdOf(def, value);
+  const full = value >= def.max;
+  const shaking = useShudder(id);
+  return (
+    <div className="status-row">
+      <span className="status-name" style={{ color: def.color }}>
+        {def.label}
+      </span>
+      <div className={`bar ${shaking ? 'shudder' : ''}`} ref={(el) => registerBar(id, el)}>
+        <div
+          className="bar-fill"
+          style={{ background: def.color, transform: `scaleX(${value / def.max})` }}
+        />
+      </div>
+      <span className="bar-num">
+        {value}/{def.max}
+      </span>
+      <span className={`status-thresh ${thr}`}>{thr}</span>
+      {full && def.detrimental && <span className="status-full">FULL!</span>}
     </div>
   );
 }
@@ -175,17 +198,28 @@ function Feed() {
         let cls = f.kind;
         if (f.kind === 'status') cls += f.detrimental ? ' detri' : ' bene';
         return (
-          <div
-            key={f.id}
-            className="feed-anchor"
-            style={{ left: `${f.px ?? 50}%`, top: `${f.py ?? 30}%` }}
-          >
+          <div key={f.id} className="feed-anchor" style={anchorStyle(f.anchor)}>
             <div className={`feed-item ${cls}`}>{f.text}</div>
           </div>
         );
       })}
     </div>
   );
+}
+
+// Resolve a popup's on-screen position from its anchor:
+//  - screen: over the world object that generated it (projected coords)
+//  - bar:    chipped off the right end of the HP/status bar
+//  - none:   readable upper-center band (notes / discovery / ability)
+function anchorStyle(anchor) {
+  if (anchor?.type === 'screen') {
+    return { left: `${anchor.xPct}%`, top: `${anchor.yPct}%` };
+  }
+  if (anchor?.type === 'bar') {
+    const r = getBarRect(anchor.which);
+    if (r) return { left: `${r.x + r.w - 4}px`, top: `${r.y + r.h / 2}px` };
+  }
+  return { left: '50%', top: '22%' };
 }
 
 function DiscoveryBanner() {

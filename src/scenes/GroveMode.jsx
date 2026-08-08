@@ -16,7 +16,13 @@ import * as THREE from 'three';
 
 import { useGameStore } from '../store/useGameStore.js';
 import { useKeys } from '../systems/useKeys.js';
+import { projectToScreen } from '../systems/screenProject.js';
+import Projector from '../systems/Projector.jsx';
 import HUD from '../ui/HUD.jsx';
+
+// World positions of the objects that generate status changes, so popups can
+// appear over them (flower -> Calm, each eye pod -> Anxiety).
+const FLOWER_WORLD = new THREE.Vector3(0, 1.25, 0);
 
 // ---- tuning (PROVISIONAL, doc §17/§40) ----
 const EYE_OPEN_CHANCE = 0.6;
@@ -162,6 +168,7 @@ function GroveWorld({ eyes, onUseFlower, heldKeys, onReachExit, canMove, flowerD
         <EyePlant key={e.id} position={e.position} open={e.open} />
       ))}
 
+      <Projector />
       <FirstPersonRig heldKeys={heldKeys} onReachExit={onReachExit} canMove={canMove} />
     </>
   );
@@ -202,8 +209,8 @@ export default function GroveMode() {
   // ---- Progress Action: Use Flower (doc §15 ordering) ----
   const handleUseFlower = useCallback(() => {
     if (fading) return;
-    // 1. resolve the action
-    applyStatus('calm', FLOWER_CALM_REWARD);
+    // 1. resolve the action — Calm popup appears over the flower.
+    applyStatus('calm', FLOWER_CALM_REWARD, { source: projectToScreen(FLOWER_WORLD) });
 
     // 2/3. advance the scene: run the Watching-Eye check
     if (Math.random() < EYE_OPEN_CHANCE) {
@@ -219,8 +226,9 @@ export default function GroveMode() {
         const gain = EYE_ANXIETY_ESCALATION[idx];
         eyesOpenedRef.current += 1;
         pushFeed('note', 'An eye opens and stares…');
-        // Anxiety gain (may overflow -> HP once the bar is full).
-        applyStatus('anxiety', gain);
+        // Anxiety gain, popup appears over the eye that opened (may overflow -> HP).
+        const eyeWorld = new THREE.Vector3(...prev[pick].position);
+        applyStatus('anxiety', gain, { source: projectToScreen(eyeWorld) });
         return next;
       });
     }

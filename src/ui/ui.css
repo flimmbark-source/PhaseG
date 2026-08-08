@@ -88,6 +88,18 @@ body,
   transform-origin: left center;
   transition: transform 0.18s ease-out;
 }
+/* Bar shudder when its value changes (HP loss / status change). */
+.bar.shudder {
+  animation: barShudder 0.55s ease;
+}
+@keyframes barShudder {
+  0%, 100% { transform: translateX(0); }
+  15% { transform: translateX(-3px); }
+  30% { transform: translateX(3px); }
+  45% { transform: translateX(-2px); }
+  60% { transform: translateX(2px); }
+  75% { transform: translateX(-1px); }
+}
 .bar-num {
   min-width: 46px;
   text-align: right;
