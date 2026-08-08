@@ -471,13 +471,7 @@ export default function RailMode() {
         />
       </Canvas>
 
-      <HUD onActivateAbility={onActivateAbility} hotkeys={HOTKEYS}>
-        <div className="hint">
-          <b>A/D</b> rotate around the rail · <b>SPACE</b> Shatter the aimed orb ·
-          <b> SHIFT</b> Hyperfocus (then Shatter clears the whole incoming band) · take orbs on
-          purpose to shape your build
-        </div>
-      </HUD>
+      <HUD onActivateAbility={onActivateAbility} hotkeys={HOTKEYS} />
 
       <div className="fade" style={{ opacity: fadingIn || fadingOut ? 1 : 0 }} />
     </div>

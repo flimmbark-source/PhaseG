@@ -17,6 +17,8 @@ import { resolveEffect } from '../systems/actionSystem.js';
 import { loadKnownAbilities, saveKnownAbilities } from '../systems/persistence.js';
 
 let feedSeq = 0;
+let feedNextSlot = 0; // earliest time the next popup may appear (for staggering)
+const FEED_STAGGER_MS = 1000; // popups queued together appear 1s apart
 const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
 /** Push a transient feedback item (status change, discovery, note). */
@@ -66,8 +68,17 @@ export const useGameStore = create((set, get) => ({
   // =========================================================================
   // Feedback plumbing
   // =========================================================================
-  pushFeed: (kind, text, extra) =>
-    set((s) => ({ feed: [...s.feed, makeFeed(kind, text, extra)].slice(-8) })),
+  // Popups are staggered: if several are pushed at once, they don't all pop on
+  // top of each other — each appears FEED_STAGGER_MS after the previous one.
+  pushFeed: (kind, text, extra) => {
+    const item = makeFeed(kind, text, extra);
+    const now = nowMs();
+    const delay = Math.max(0, feedNextSlot - now);
+    feedNextSlot = Math.max(now, feedNextSlot) + FEED_STAGGER_MS;
+    const commit = () => set((s) => ({ feed: [...s.feed, item].slice(-8) }));
+    if (delay <= 0) commit();
+    else setTimeout(commit, delay);
+  },
 
   expireFeed: (id) => set((s) => ({ feed: s.feed.filter((f) => f.id !== id) })),
 

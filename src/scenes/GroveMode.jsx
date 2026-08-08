@@ -277,10 +277,6 @@ export default function GroveMode() {
             Back Away <span style={{ opacity: 0.6 }}>[S]</span> →
           </button>
         </div>
-        <div className="hint">
-          <b>W</b> approach · <b>S</b> back away into the haze (to the Rail) · click the flower or
-          <b> E</b> to use it · <b>F</b> Shatter · <b>G</b> Hyperfocus
-        </div>
       </HUD>
 
       <div className="fade" style={{ opacity: fading ? 1 : 0 }} />
