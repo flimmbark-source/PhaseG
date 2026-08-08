@@ -1,0 +1,400 @@
+/* ------------------------------------------------------------------ */
+/* Prototype UI — clarity over aesthetics (design doc §29).            */
+/* ------------------------------------------------------------------ */
+:root {
+  --panel-bg: rgba(12, 10, 22, 0.72);
+  --panel-border: rgba(150, 130, 220, 0.28);
+  --text: #eae6ff;
+  --text-dim: #a99fce;
+  --hp: #ff5b6e;
+  --danger: #ff7a4d;
+  --good: #7dffb0;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: #05040a;
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  user-select: none;
+}
+
+.canvas-wrap {
+  position: fixed;
+  inset: 0;
+}
+
+/* ---- generic HUD overlay ---- */
+.hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+}
+.hud > * {
+  pointer-events: auto;
+}
+
+.panel {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  backdrop-filter: blur(6px);
+  padding: 10px 12px;
+}
+
+/* ---- top-left: HP + statuses ---- */
+.hud-vitals {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  width: 268px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.hp-label {
+  width: 30px;
+  color: var(--hp);
+}
+.bar {
+  position: relative;
+  flex: 1;
+  height: 14px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.09);
+  overflow: hidden;
+}
+.bar-fill {
+  position: absolute;
+  inset: 0;
+  transform-origin: left center;
+  transition: transform 0.18s ease-out;
+}
+.bar-num {
+  min-width: 46px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.status-name {
+  width: 58px;
+  font-weight: 600;
+}
+.status-thresh {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--panel-border);
+  color: var(--text-dim);
+}
+.status-thresh.high {
+  color: #fff;
+  border-color: currentColor;
+}
+.status-full {
+  color: var(--danger);
+  font-weight: 700;
+  animation: pulse 0.9s infinite;
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.4;
+  }
+}
+
+/* ---- bottom-center: abilities ---- */
+.hud-abilities {
+  position: fixed;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+}
+.ability {
+  position: relative;
+  width: 118px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel-bg);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color 0.12s, transform 0.08s;
+}
+.ability:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.ability.usable {
+  border-color: var(--good);
+  box-shadow: 0 0 14px rgba(125, 255, 176, 0.25);
+}
+.ability.armed {
+  border-color: #ffe071;
+  box-shadow: 0 0 16px rgba(255, 224, 113, 0.45);
+}
+.ability:not(:disabled):active {
+  transform: translateY(1px);
+}
+.ability-name {
+  font-weight: 700;
+  font-size: 14px;
+}
+.ability-sub {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 2px;
+  min-height: 14px;
+}
+.ability-key {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  font-size: 10px;
+  color: var(--text-dim);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.ability-cd {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  background: #ffe071;
+  transition: width 0.1s linear;
+}
+.ability-hidden {
+  opacity: 0.35;
+  font-style: italic;
+}
+
+/* ---- top-right: buttons ---- */
+.hud-topright {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  gap: 8px;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.btn {
+  pointer-events: auto;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.btn:hover {
+  border-color: var(--good);
+}
+.mode-tag {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+}
+
+/* ---- center feedback toasts ---- */
+.feed {
+  position: fixed;
+  top: 84px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+  z-index: 20;
+}
+.feed-item {
+  font-size: 14px;
+  font-weight: 600;
+  padding: 3px 12px;
+  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.45);
+  animation: rise 0.3s ease-out;
+}
+.feed-item.status.detri {
+  color: var(--danger);
+}
+.feed-item.status.bene {
+  color: var(--good);
+}
+.feed-item.overflow {
+  color: var(--hp);
+  font-weight: 800;
+}
+.feed-item.note {
+  color: var(--text-dim);
+}
+.feed-item.ability {
+  color: #ffe071;
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+/* ---- big discovery banner ---- */
+.discovery {
+  position: fixed;
+  top: 34%;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+  z-index: 40;
+  pointer-events: none;
+  animation: pop 0.4s ease-out;
+}
+.discovery .kicker {
+  font-size: 14px;
+  letter-spacing: 6px;
+  color: var(--text-dim);
+}
+.discovery .name {
+  font-size: 46px;
+  font-weight: 900;
+  letter-spacing: 3px;
+  color: #ffe071;
+  text-shadow: 0 0 24px rgba(255, 224, 113, 0.6);
+}
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+/* ---- compendium modal ---- */
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+.modal {
+  width: min(560px, 92vw);
+  max-height: 80vh;
+  overflow: auto;
+}
+.modal h2 {
+  margin: 0 0 4px;
+  letter-spacing: 2px;
+}
+.compendium-entry {
+  border-top: 1px solid var(--panel-border);
+  padding: 12px 0;
+}
+.compendium-entry h3 {
+  margin: 0 0 4px;
+  color: #ffe071;
+}
+.compendium-entry .req {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.compendium-entry .eff {
+  margin-top: 4px;
+}
+.compendium-entry .flavor {
+  margin-top: 6px;
+  font-style: italic;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.locked {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+/* ---- prompts / hints ---- */
+.hint {
+  position: fixed;
+  bottom: 96px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 13px;
+  color: var(--text-dim);
+  text-align: center;
+  background: rgba(0, 0, 0, 0.35);
+  padding: 6px 14px;
+  border-radius: 8px;
+  max-width: 90vw;
+}
+.hint b {
+  color: var(--text);
+}
+
+/* ---- interaction prompt (world-anchored-ish) ---- */
+.action-buttons {
+  position: fixed;
+  bottom: 150px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+}
+.action-buttons .btn {
+  font-size: 15px;
+  padding: 10px 18px;
+}
+.btn.primary {
+  border-color: var(--good);
+  background: rgba(40, 90, 60, 0.5);
+}
+
+/* ---- fade overlay for transitions ---- */
+.fade {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  z-index: 30;
+  pointer-events: none;
+  transition: opacity 0.7s ease;
+}
