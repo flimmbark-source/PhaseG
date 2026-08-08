@@ -22,9 +22,12 @@ import HUD from '../ui/HUD.jsx';
 
 // ---- tuning (PROVISIONAL) ----
 const SEG = 600; // frenet-frame resolution
-const RAIL_SPEED = 0.028; // progress per second (~35s traversal)
-const ROT_SPEED = 2.7; // radians / second around the rail
-const PLAYER_R = 1.75; // player distance from rail centerline
+const RAIL_SPEED = 0.06; // progress per second (~2x+ the old grind, ~17s traversal)
+const ROT_SPEED = 3.4; // radians / second around the rail
+const PLAYER_R = 1.3; // player orbits ON the rail's surface, around its axis
+const RAIL_CORE_R = 0.32; // thickness of the rail itself (a thin central beam)
+const CAM_R = PLAYER_R + 3.0; // camera sits OUTSIDE the player — over-the-shoulder
+const CAM_BACK = 0.045; // how far behind the player (in progress units) the camera sits
 const COLLIDE_ANGLE = 0.55; // angular tolerance for an orb collision (rad)
 const AIM_WINDOW_T = 0.14; // how far ahead the primary Shatter target may be
 const AIM_CONE = 0.8; // angular cone for primary target selection
@@ -141,6 +144,7 @@ function RailWorld({ heldKeys, playerStateRef, orbs, curveData, onCollide, onRea
   const vDir = useMemo(() => new THREE.Vector3(), []);
   const vPlayer = useMemo(() => new THREE.Vector3(), []);
   const vCam = useMemo(() => new THREE.Vector3(), []);
+  const vLook = useMemo(() => new THREE.Vector3(), []);
 
   useFrame((state, dtRaw) => {
     const dt = Math.min(dtRaw, 0.05); // clamp big frame gaps
@@ -163,13 +167,21 @@ function RailWorld({ heldKeys, playerStateRef, orbs, curveData, onCollide, onRea
       playerRef.current.position.copy(vPlayer);
     }
 
-    // --- camera: behind + outside at the player's angle, looking at player ---
-    const camT = Math.max(0, ps.t - 0.03);
+    // --- camera: OVER-THE-SHOULDER, outside the player at their angle ---
+    // The camera orbits with the player (CAM_R > PLAYER_R), so "up" stays
+    // relative to where the player currently rides around the rail. We look a
+    // little further down the rail so forward motion and oncoming orbs read.
+    const camT = Math.max(0, ps.t - CAM_BACK);
     curve.getPointAt(camT, vCenter);
-    offsetDir(camT, ps.theta, vDir).multiplyScalar(PLAYER_R + 3.4);
-    vCam.copy(vCenter).add(vDir).add(new THREE.Vector3(0, 0.6, 0));
+    offsetDir(camT, ps.theta, vDir).multiplyScalar(CAM_R);
+    vCam.copy(vCenter).add(vDir);
     state.camera.position.lerp(vCam, 1 - Math.pow(0.0008, dt));
-    state.camera.lookAt(vPlayer);
+
+    const lookT = Math.min(1, ps.t + 0.06);
+    curve.getPointAt(lookT, vCenter);
+    offsetDir(lookT, ps.theta, vDir).multiplyScalar(PLAYER_R);
+    vLook.copy(vCenter).add(vDir);
+    state.camera.lookAt(vLook);
 
     // --- collisions: orb crossed this frame within the angular tolerance ---
     for (const orb of orbs) {
@@ -221,7 +233,8 @@ function RailWorld({ heldKeys, playerStateRef, orbs, curveData, onCollide, onRea
       <ambientLight intensity={0.6} />
       <pointLight position={[0, 6, -20]} intensity={60} distance={80} color="#b98bff" />
 
-      <RailTube curveData={curveData} />
+      <Rail curveData={curveData} />
+      <StarField />
 
       {/* second sphere at the end of the rail */}
       <mesh position={curve.getPointAt(1).toArray()}>
@@ -281,39 +294,65 @@ function pickRepeatTargets(orbs, ps) {
   });
 }
 
-function RailTube({ curveData }) {
+// The rail itself: a thin glowing central beam the player grinds along and
+// rotates AROUND. This is a rail in open space — deliberately NOT an enclosing
+// tube. The player and orbs orbit its axis at PLAYER_R.
+function Rail({ curveData }) {
   const { curve } = curveData;
-  const rings = useMemo(() => {
-    const N = 90;
-    const out = [];
-    const up = new THREE.Vector3(0, 0, 1);
-    for (let i = 0; i < N; i++) {
-      const t = i / (N - 1);
-      const p = curve.getPointAt(t);
-      const tan = curve.getTangentAt(t);
-      const q = new THREE.Quaternion().setFromUnitVectors(up, tan);
-      const hue = (t * 2.5) % 1;
-      const color = new THREE.Color().setHSL(hue, 0.7, 0.55);
-      out.push({ pos: p.toArray(), quat: [q.x, q.y, q.z, q.w], color });
-    }
-    return out;
-  }, [curve]);
-
+  const geo = useMemo(
+    () => new THREE.TubeGeometry(curve, 500, RAIL_CORE_R, 10, false),
+    [curve],
+  );
+  const glowGeo = useMemo(
+    () => new THREE.TubeGeometry(curve, 500, RAIL_CORE_R * 2.2, 10, false),
+    [curve],
+  );
   return (
     <>
-      {rings.map((r, i) => (
-        <mesh key={i} position={r.pos} quaternion={r.quat}>
-          <torusGeometry args={[2.4, 0.04, 6, 32]} />
-          <meshStandardMaterial
-            color={r.color}
-            emissive={r.color}
-            emissiveIntensity={0.8}
-            transparent
-            opacity={0.6}
-          />
-        </mesh>
-      ))}
+      <mesh geometry={glowGeo}>
+        <meshBasicMaterial color="#7a4fff" transparent opacity={0.12} depthWrite={false} />
+      </mesh>
+      <mesh geometry={geo}>
+        <meshStandardMaterial
+          color="#d8c8ff"
+          emissive="#8a5bff"
+          emissiveIntensity={1.1}
+          metalness={0.7}
+          roughness={0.25}
+        />
+      </mesh>
     </>
+  );
+}
+
+// Psychedelic floating specks around the rail — gives a sense of speed and the
+// "tunnel-like dimension" without boxing the player inside anything.
+function StarField() {
+  const geo = useMemo(() => {
+    const N = 900;
+    const pos = new Float32Array(N * 3);
+    const col = new Float32Array(N * 3);
+    const c = new THREE.Color();
+    for (let i = 0; i < N; i++) {
+      const r = 6 + Math.random() * 26;
+      const a = Math.random() * Math.PI * 2;
+      pos[i * 3] = Math.cos(a) * r + (Math.random() - 0.5) * 10;
+      pos[i * 3 + 1] = Math.sin(a) * r + (Math.random() - 0.5) * 10;
+      pos[i * 3 + 2] = 5 - Math.random() * 165;
+      c.setHSL((Math.random() * 0.35 + 0.58) % 1, 0.75, 0.62);
+      col[i * 3] = c.r;
+      col[i * 3 + 1] = c.g;
+      col[i * 3 + 2] = c.b;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    return g;
+  }, []);
+  return (
+    <points geometry={geo}>
+      <pointsMaterial size={0.35} vertexColors transparent opacity={0.85} sizeAttenuation />
+    </points>
   );
 }
 
