@@ -39,8 +39,10 @@ function FirstPersonRig({ heldKeys, onReachExit, canMove }) {
     const speed = 6 * dt;
     let z = state.camera.position.z;
 
+    // S is the Back Away shortcut (handled as a keypress below), so it is not a
+    // hold-to-move key here; ArrowDown still nudges backward manually.
     const forward = k['w'] || k['arrowup'];
-    const back = k['s'] || k['arrowdown'];
+    const back = k['arrowdown'];
     if (forward) z -= speed;
     if (back) z += speed;
 
@@ -192,6 +194,7 @@ export default function GroveMode() {
 
   const heldKeys = useKeys({
     e: () => handleUseFlower(),
+    s: () => triggerExit(), // Back Away shortcut
     f: () => onActivateAbility('shatter'),
     g: () => onActivateAbility('hyperfocus'),
   });
@@ -271,12 +274,12 @@ export default function GroveMode() {
             Use Flower <span style={{ opacity: 0.6 }}>[E]</span>
           </button>
           <button className="btn" onClick={triggerExit} disabled={fading}>
-            Back Away →
+            Back Away <span style={{ opacity: 0.6 }}>[S]</span> →
           </button>
         </div>
         <div className="hint">
-          <b>W/S</b> approach &amp; back away · click the flower or <b>E</b> to use it ·
-          <b> F</b> Shatter · <b>G</b> Hyperfocus · back away into the haze to reach the Rail
+          <b>W</b> approach · <b>S</b> back away into the haze (to the Rail) · click the flower or
+          <b> E</b> to use it · <b>F</b> Shatter · <b>G</b> Hyperfocus
         </div>
       </HUD>
 

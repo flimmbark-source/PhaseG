@@ -57,6 +57,10 @@ function angDiff(a, b) {
 // Orb formations (doc §22-§23). Lines usually share a Status type so the player
 // can read consequences ahead of time.
 // ---------------------------------------------------------------------------
+// Empty stretch of rail at the very start so the player can settle into the
+// controls before the first orbs arrive (nothing spawns before this progress).
+const RUNWAY_T = 0.22;
+
 function buildFormations() {
   const orbs = [];
   let id = 0;
@@ -67,26 +71,28 @@ function buildFormations() {
     }
   };
 
+  // --- runway: 0 .. RUNWAY_T is intentionally empty ---
+
   // Early: a readable Focus line (top up Focus) — safe to take.
-  line(0.1, 0.16, 3, 0.4, 'focus');
+  line(RUNWAY_T + 0.0, RUNWAY_T + 0.06, 3, 0.4, 'focus');
   // A short Anxiety line — the "raise Anxiety to MEDIUM to enable Hyperfocus"
   // opportunity (doc §23). Player may take these on purpose.
-  line(0.22, 0.28, 3, 2.2, 'anxiety');
+  line(RUNWAY_T + 0.12, RUNWAY_T + 0.18, 3, 2.2, 'anxiety');
   // Calm reward line, offset to the other side.
-  line(0.34, 0.4, 3, 4.2, 'calm');
+  line(RUNWAY_T + 0.24, RUNWAY_T + 0.3, 3, 4.2, 'calm');
   // A scattered Anxiety wall — genuinely wants dodging when your bar is high.
-  line(0.48, 0.52, 1, 0.2, 'anxiety');
-  line(0.5, 0.54, 1, 1.6, 'anxiety');
-  line(0.52, 0.56, 1, 3.4, 'anxiety');
-  line(0.54, 0.58, 1, 5.0, 'anxiety');
+  line(RUNWAY_T + 0.38, RUNWAY_T + 0.38, 1, 0.2, 'anxiety');
+  line(RUNWAY_T + 0.4, RUNWAY_T + 0.4, 1, 1.6, 'anxiety');
+  line(RUNWAY_T + 0.42, RUNWAY_T + 0.42, 1, 3.4, 'anxiety');
+  line(RUNWAY_T + 0.44, RUNWAY_T + 0.44, 1, 5.0, 'anxiety');
   // Focus refresh before the finale.
-  line(0.62, 0.66, 2, 5.6, 'focus');
+  line(RUNWAY_T + 0.5, RUNWAY_T + 0.54, 2, 5.6, 'focus');
   // The finale STREAM: a dense band of Anxiety orbs spread across many angles.
   // Dodging all is hard; Hyperfocus + Shatter clears the whole band (doc §24).
   for (let i = 0; i < 10; i++) {
     orbs.push({
       id: id++,
-      t: 0.74 + i * 0.014,
+      t: RUNWAY_T + 0.6 + i * 0.012,
       theta: (i / 10) * Math.PI * 2,
       statusId: 'anxiety',
       amount: 1,

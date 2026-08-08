@@ -87,10 +87,21 @@ function AbilityChip({ id, hotkey, onActivate }) {
   const reqOk = requirementsMet(def, statuses);
   const armed = id === 'hyperfocus' ? repeatArmed : false;
 
-  let sub;
-  if (cooldown > 0) sub = `cooldown ${cooldown.toFixed(cooldown < 1 ? 1 : 0)}`;
-  else if (!reqOk) sub = 'requirements unmet';
-  else sub = 'ready';
+  // Condensed status line: what's currently between you and using it.
+  let sub, subCls;
+  if (armed) {
+    sub = 'ARMED — repeats next';
+    subCls = 'ok';
+  } else if (cooldown > 0) {
+    sub = `cooling ${cooldown.toFixed(cooldown < 1 ? 1 : 0)}`;
+    subCls = '';
+  } else if (!reqOk) {
+    sub = `needs ${reqSummary(def)}`;
+    subCls = 'unmet';
+  } else {
+    sub = 'READY';
+    subCls = 'ok';
+  }
 
   const cdPct = cooldown > 0 ? (cooldown / def.cooldown) * 100 : 0;
 
@@ -99,14 +110,33 @@ function AbilityChip({ id, hotkey, onActivate }) {
       className={`ability ${usable ? 'usable' : ''} ${armed ? 'armed' : ''}`}
       disabled={!usable}
       onClick={() => onActivate(id)}
-      title={def.description}
+      title={`${def.description}${def.requirements.length ? ` — requires ${reqSummary(def)}` : ''}`}
     >
       <span className="ability-key">{hotkey}</span>
-      <div className="ability-name">{def.name}</div>
-      <div className="ability-sub">{armed ? 'ARMED — repeats next' : sub}</div>
+      <div className="ability-name">
+        {def.name}
+        <span className="ability-cdnum">CD {def.cooldown}</span>
+      </div>
+      <div className="ability-effect">{def.description}</div>
+      <div className={`ability-sub ${subCls}`}>{sub}</div>
       {cooldown > 0 && <div className="ability-cd" style={{ width: `${cdPct}%` }} />}
     </button>
   );
+}
+
+// Compact requirement text, e.g. "Focus HIGH · Anxiety MED+".
+const THRESH_ABBR = { low: 'LOW', medium: 'MED', high: 'HIGH' };
+function reqSummary(def) {
+  if (!def.requirements.length) return 'nothing';
+  return def.requirements
+    .map((c) => {
+      const label = STATUS_DEFS[c.status]?.label ?? c.status;
+      const th = c.threshold
+        ? THRESH_ABBR[c.threshold]
+        : `${THRESH_ABBR[c.minThreshold]}+`;
+      return `${label} ${th}`;
+    })
+    .join(' · ');
 }
 
 // `onActivate` is provided by the active mode so the same chips route to the
@@ -145,8 +175,12 @@ function Feed() {
         let cls = f.kind;
         if (f.kind === 'status') cls += f.detrimental ? ' detri' : ' bene';
         return (
-          <div key={f.id} className={`feed-item ${cls}`} style={{ marginLeft: f.dx ?? 0 }}>
-            {f.text}
+          <div
+            key={f.id}
+            className="feed-anchor"
+            style={{ left: `${f.px ?? 50}%`, top: `${f.py ?? 30}%` }}
+          >
+            <div className={`feed-item ${cls}`}>{f.text}</div>
           </div>
         );
       })}

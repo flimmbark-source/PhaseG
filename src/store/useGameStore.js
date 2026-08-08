@@ -21,12 +21,13 @@ const nowMs = () => (typeof performance !== 'undefined' ? performance.now() : Da
 
 /** Push a transient feedback item (status change, discovery, note). */
 function makeFeed(kind, text, extra = {}) {
-  // dx: a little horizontal scatter so popups feel like arcade text rather than
-  // a boring centered stack. Discovery/note kinds stay put (dx 0).
-  const dx = kind === 'status' || kind === 'overflow' || kind === 'ability'
-    ? Math.round((Math.random() * 2 - 1) * 150)
-    : 0;
-  return { id: ++feedSeq, kind, text, t: nowMs(), dx, ...extra };
+  // Scatter arcade popups across most of the screen (percent of viewport).
+  // Notes/discovery are informational, so they stay in a readable upper-center
+  // band instead of flying to the corners.
+  const scatter = kind === 'status' || kind === 'overflow' || kind === 'ability';
+  const px = scatter ? 12 + Math.random() * 76 : 50; // 12%..88% horizontally
+  const py = scatter ? 20 + Math.random() * 58 : 24; // 20%..78% vertically
+  return { id: ++feedSeq, kind, text, t: nowMs(), px, py, ...extra };
 }
 
 export const useGameStore = create((set, get) => ({
