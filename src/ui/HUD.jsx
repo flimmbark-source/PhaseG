@@ -222,6 +222,58 @@ function anchorStyle(anchor) {
   return { left: '50%', top: '22%' };
 }
 
+// Ability glyph FX: each glyph pops with an expanding ring over the thing its
+// ability affected (player for Hyperfocus, each Target for Shatter).
+function Glyphs() {
+  const glyphs = useGameStore((s) => s.glyphs);
+  const expireGlyph = useGameStore((s) => s.expireGlyph);
+  const scheduled = useRef(new Set());
+
+  useEffect(() => {
+    glyphs.forEach((g) => {
+      if (scheduled.current.has(g.id)) return;
+      scheduled.current.add(g.id);
+      setTimeout(() => {
+        expireGlyph(g.id);
+        scheduled.current.delete(g.id);
+      }, 850);
+    });
+  }, [glyphs, expireGlyph]);
+
+  return (
+    <div className="glyph-layer">
+      {glyphs.map((g) => {
+        const def = ABILITY_DEFS[g.ability];
+        return (
+          <div
+            key={g.id}
+            className="glyph-fx"
+            style={{ left: `${g.xPct}%`, top: `${g.yPct}%`, color: def?.glyphColor ?? '#fff' }}
+          >
+            <span className="glyph-ring" />
+            <span className="glyph-sym">{def?.glyph ?? '✶'}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function HyperfocusPulse() {
+  const fxPulse = useGameStore((s) => s.fxPulse);
+  const prev = useRef(fxPulse);
+  const [on, setOn] = useState(false);
+  useEffect(() => {
+    if (fxPulse !== prev.current) {
+      prev.current = fxPulse;
+      setOn(true);
+      const t = setTimeout(() => setOn(false), 650);
+      return () => clearTimeout(t);
+    }
+  }, [fxPulse]);
+  return on ? <div className="hyperfocus-pulse" /> : null;
+}
+
 function DiscoveryBanner() {
   const lastDiscovery = useGameStore((s) => s.lastDiscovery);
   const clearDiscoveryBanner = useGameStore((s) => s.clearDiscoveryBanner);
@@ -268,6 +320,8 @@ export default function HUD({ onActivateAbility, hotkeys = {}, children }) {
       </div>
 
       <Feed />
+      <Glyphs />
+      <HyperfocusPulse />
       <DiscoveryBanner />
 
       {children}

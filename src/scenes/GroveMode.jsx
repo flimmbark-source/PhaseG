@@ -183,6 +183,8 @@ export default function GroveMode() {
   const activateAbility = useGameStore((s) => s.activateAbility);
   const exitSceneToRail = useGameStore((s) => s.exitSceneToRail);
   const pushFeed = useGameStore((s) => s.pushFeed);
+  const spawnGlyph = useGameStore((s) => s.spawnGlyph);
+  const firePulse = useGameStore((s) => s.firePulse);
 
   // Scene-local (non-persistent) state.
   const [eyes, setEyes] = useState(() =>
@@ -244,16 +246,32 @@ export default function GroveMode() {
   const onActivateAbility = useCallback(
     (id) => {
       const openEyes = eyes.filter((e) => e.open);
+      const hitPositions = [];
       const ctx = {
         getPrimaryTarget: () => openEyes[0] ?? null,
         getValidTargets: () => openEyes,
-        destroyTarget: (eye) =>
-          setEyes((prev) => prev.map((e) => (e.id === eye.id ? { ...e, open: false } : e))),
+        destroyTarget: (eye) => {
+          setEyes((prev) => prev.map((e) => (e.id === eye.id ? { ...e, open: false } : e)));
+          hitPositions.push(new THREE.Vector3(...eye.position));
+        },
         onEffect: () => {},
       };
-      activateAbility(id, ctx);
+      const res = activateAbility(id, ctx);
+      if (!res?.ok) return;
+
+      // Ability FX: glyph over everything the ability affected.
+      if (id === 'shatter') {
+        for (const pos of hitPositions) {
+          const s = projectToScreen(pos);
+          if (s) spawnGlyph('shatter', s.xPct, s.yPct - 6);
+        }
+      } else if (id === 'hyperfocus') {
+        // First-person: the "player" is the viewer, so the glyph sits center-frame.
+        spawnGlyph('hyperfocus', 50, 40);
+        firePulse();
+      }
     },
-    [eyes, activateAbility],
+    [eyes, activateAbility, spawnGlyph, firePulse],
   );
 
   // ---- Exit: back away into the haze -> Rail ----

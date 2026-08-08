@@ -333,6 +333,91 @@ body,
   }
 }
 
+/* ---- ability glyph FX ---- */
+.glyph-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 22;
+}
+.glyph-fx {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 0;
+  height: 0;
+}
+.glyph-sym {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
+  font-size: 40px;
+  line-height: 1;
+  font-weight: 900;
+  text-shadow: 0 0 12px currentColor, 0 0 26px currentColor;
+  animation: glyphPop 850ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+.glyph-ring {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+  border-radius: 50%;
+  border: 3px solid currentColor;
+  box-shadow: 0 0 14px currentColor;
+  animation: glyphRing 700ms ease-out forwards;
+}
+@keyframes glyphPop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.2) rotate(-25deg);
+  }
+  35% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.25) rotate(0deg);
+  }
+  55% {
+    transform: translate(-50%, -80%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -160%) scale(0.95);
+  }
+}
+@keyframes glyphRing {
+  0% {
+    opacity: 0.9;
+    transform: scale(0.2);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(4.5);
+  }
+}
+
+/* Brief screen pulse when Hyperfocus arms, so activation is unmistakable. */
+.hyperfocus-pulse {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 21;
+  box-shadow: inset 0 0 160px 40px rgba(255, 224, 113, 0.55);
+  animation: hfPulse 650ms ease-out forwards;
+}
+@keyframes hfPulse {
+  0% {
+    opacity: 0;
+  }
+  25% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
 /* ---- big discovery banner ---- */
 .discovery {
   position: fixed;

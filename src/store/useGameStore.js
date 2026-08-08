@@ -44,6 +44,7 @@ export const useGameStore = create((set, get) => ({
 
   // ---- UI feedback ----------------------------------------------------------
   feed: [], // transient toasts (status changes, discoveries)
+  glyphs: [], // transient ability glyph FX ({ id, ability, xPct, yPct })
   shudder: {}, // bar id ('hp'|statusId) -> incrementing counter (drives bar shake)
   compendiumOpen: false,
   lastDiscovery: null, // { id, at } for the big NEW ABILITY banner
@@ -92,6 +93,18 @@ export const useGameStore = create((set, get) => ({
   pushFeed: (kind, text, extra) => get()._scheduleFeed([makeFeed(kind, text, extra)]),
 
   expireFeed: (id) => set((s) => ({ feed: s.feed.filter((f) => f.id !== id) })),
+
+  // ---- ability glyph FX (immediate; not staggered) ----
+  // Spawned by a mode at the screen position of each affected thing (player for
+  // Hyperfocus, each Target for Shatter).
+  spawnGlyph: (ability, xPct, yPct) =>
+    set((s) => ({ glyphs: [...s.glyphs, { id: ++feedSeq, ability, xPct, yPct }].slice(-24) })),
+
+  expireGlyph: (id) => set((s) => ({ glyphs: s.glyphs.filter((g) => g.id !== id) })),
+
+  // Full-screen pulse counter (e.g. Hyperfocus arming). Bumping triggers the FX.
+  fxPulse: 0,
+  firePulse: () => set((s) => ({ fxPulse: s.fxPulse + 1 })),
 
   // =========================================================================
   // STATUS CHANGES (doc §5, §6) — the one place statuses/HP mutate.
@@ -267,6 +280,7 @@ export const useGameStore = create((set, get) => ({
       currentScene: 'grove',
       transitioning: false,
       feed: [],
+      glyphs: [],
       shudder: {},
       lastDiscovery: null,
       // knownAbilities intentionally preserved (Compendium persistence).

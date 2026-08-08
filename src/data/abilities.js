@@ -32,6 +32,8 @@ export const ABILITY_DEFS = {
     id: 'hyperfocus',
     name: 'Hyperfocus',
     effect: 'repeatNextAction',
+    glyph: '◉', // shown over the player when activated
+    glyphColor: '#ffe071',
     cooldown: 10,
     requirements: [
       { status: 'focus', threshold: 'high' }, // Focus: HIGH
@@ -47,6 +49,8 @@ export const ABILITY_DEFS = {
     id: 'shatter',
     name: 'Shatter',
     effect: 'destroyTarget',
+    glyph: '✸', // shown over each destroyed Target
+    glyphColor: '#8fd8ff',
     cooldown: 5,
     requirements: [], // no Status requirement in the prototype (doc §40: "if any")
     startsKnown: true, // available from the start so the interaction can be tested

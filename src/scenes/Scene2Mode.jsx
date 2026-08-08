@@ -45,6 +45,8 @@ export default function Scene2Mode() {
   const knownAbilities = useGameStore((s) => s.knownAbilities);
   const resetRun = useGameStore((s) => s.resetRun);
   const activateAbility = useGameStore((s) => s.activateAbility);
+  const spawnGlyph = useGameStore((s) => s.spawnGlyph);
+  const firePulse = useGameStore((s) => s.firePulse);
 
   // A tiny read-out of the state we arrived with.
   const summary = useMemo(
@@ -58,7 +60,13 @@ export default function Scene2Mode() {
   );
 
   // Scene 2 has no Targets yet, so abilities just resolve against an empty ctx.
-  const onActivateAbility = (id) => activateAbility(id, {});
+  const onActivateAbility = (id) => {
+    const res = activateAbility(id, {});
+    if (res?.ok && id === 'hyperfocus') {
+      spawnGlyph('hyperfocus', 50, 42);
+      firePulse();
+    }
+  };
 
   return (
     <div className="canvas-wrap">

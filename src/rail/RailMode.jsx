@@ -108,7 +108,7 @@ function buildFormations() {
 // Rail world (inside Canvas). All per-frame motion is imperative for smoothness;
 // React state is touched only on discrete events (collisions, cooldown ticks).
 // ---------------------------------------------------------------------------
-function RailWorld({ heldKeys, playerStateRef, orbs, curveData, onCollide, onReachExit }) {
+function RailWorld({ heldKeys, playerStateRef, playerWorldRef, orbs, curveData, onCollide, onReachExit }) {
   const applyStatusTick = useGameStore((s) => s.tickCooldowns);
   const playerRef = useRef();
   const aimRef = useRef();
@@ -174,6 +174,7 @@ function RailWorld({ heldKeys, playerStateRef, orbs, curveData, onCollide, onRea
     if (playerRef.current) {
       playerRef.current.position.copy(vPlayer);
     }
+    if (playerWorldRef) playerWorldRef.current.copy(vPlayer); // for ability glyph placement
 
     // --- camera: OVER-THE-SHOULDER, outside the player at their angle ---
     // The camera orbits with the player (CAM_R > PLAYER_R), so "up" stays
@@ -399,6 +400,8 @@ export default function RailMode() {
   const applyStatus = useGameStore((s) => s.applyStatus);
   const activateAbility = useGameStore((s) => s.activateAbility);
   const enterSecondSphere = useGameStore((s) => s.enterSecondSphere);
+  const spawnGlyph = useGameStore((s) => s.spawnGlyph);
+  const firePulse = useGameStore((s) => s.firePulse);
 
   const [fadingIn, setFadingIn] = React.useState(true);
   const [fadingOut, setFadingOut] = React.useState(false);
@@ -423,6 +426,7 @@ export default function RailMode() {
 
   const orbs = useMemo(() => buildFormations(), []);
   const playerStateRef = useRef({ t: 0, theta: 0 });
+  const playerWorldRef = useRef(new THREE.Vector3());
 
   const onCollide = useCallback(
     (orb) => {
@@ -436,18 +440,33 @@ export default function RailMode() {
   const onActivateAbility = useCallback(
     (id) => {
       const ps = playerStateRef.current;
+      const hitPositions = []; // world positions of Targets destroyed this activation
       const ctx = {
         getPrimaryTarget: () => pickPrimaryTarget(orbs, ps),
         getValidTargets: () => pickRepeatTargets(orbs, ps),
         destroyTarget: (orb) => {
           orb.consumed = true; // destroyed BEFORE it can collide — no Status applied
           if (orb.ref?.current) orb.ref.current.visible = false;
+          if (orb.pos) hitPositions.push(orb.pos.clone());
         },
         onEffect: () => {},
       };
-      activateAbility(id, ctx);
+      const res = activateAbility(id, ctx);
+      if (!res?.ok) return;
+
+      // Ability FX: glyph over everything the ability affected.
+      if (id === 'shatter') {
+        for (const pos of hitPositions) {
+          const s = projectToScreen(pos);
+          if (s) spawnGlyph('shatter', s.xPct, s.yPct - 5);
+        }
+      } else if (id === 'hyperfocus') {
+        const s = projectToScreen(playerWorldRef.current);
+        if (s) spawnGlyph('hyperfocus', s.xPct, s.yPct - 9);
+        firePulse();
+      }
     },
-    [orbs, activateAbility],
+    [orbs, activateAbility, spawnGlyph, firePulse],
   );
 
   const heldKeys = useKeys({
@@ -466,6 +485,7 @@ export default function RailMode() {
         <RailWorld
           heldKeys={heldKeys}
           playerStateRef={playerStateRef}
+          playerWorldRef={playerWorldRef}
           orbs={orbs}
           curveData={curveData}
           onCollide={onCollide}
