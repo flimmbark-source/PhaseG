@@ -43,6 +43,7 @@ const AIM_WINDOW_T = 0.045; // how far ahead the primary Shatter target may be
 const AIM_CONE = 0.8; // angular cone for primary target selection
 const REPEAT_WINDOW_T = 0.075; // Hyperfocus repeat reaches further down the rail
 const AHEAD_WINDOW_T = 0.09; // orbs are only shown/updated within this reach ahead
+const ORB_HOVER = 1.0; // world units the orbs float ABOVE the plain (no clipping)
 const EXIT_T = 0.99; // reaching here enters the second sphere
 
 const HOTKEYS = { shatter: 'SPACE', hyperfocus: 'SHIFT' };
@@ -103,13 +104,21 @@ function buildStableFrames(curve, seg) {
 }
 
 // Current angular position of an orb given its motion type and the clock.
-// (theta0 is the base angle; collision/aim read the live orb.theta we update.)
+// `rel` is the orb's designed offset within its formation; `anchor` is the
+// player's angle captured when the orb spawned — so the formation appears in its
+// intended positions RELATIVE TO THE PLAYER wherever they are on the big plain.
+// REL_CENTER re-centers the authored angle range (~0..2π) around 0, so a
+// formation straddles the player instead of sitting all to one side — otherwise
+// engaging each formation would nudge the player the same way and slowly march
+// them to the plain's edge. It's a rigid shift, so relative positioning is kept.
+const REL_CENTER = Math.PI;
 function orbThetaAt(orb, time) {
+  const base = orb.anchor + orb.rel - REL_CENTER;
   const m = orb.motion;
-  if (!m || m.type === 'static') return orb.theta0;
-  if (m.type === 'orbit') return orb.theta0 + m.speed * time; // rotates around the rail
-  if (m.type === 'wave') return orb.theta0 + m.amp * Math.sin(time * m.freq + orb.phase); // weaves
-  return orb.theta0;
+  if (!m || m.type === 'static') return base;
+  if (m.type === 'orbit') return base + m.speed * time; // rotates around the rail
+  if (m.type === 'wave') return base + m.amp * Math.sin(time * m.freq + orb.phase); // weaves
+  return base;
 }
 
 // ---------------------------------------------------------------------------
@@ -129,8 +138,10 @@ function buildFormations() {
     orbs.push({
       id: id++,
       t,
-      theta0: theta,
-      theta, // live angle (updated per frame for moving orbs)
+      rel: theta, // designed offset within the formation (relative to the player)
+      anchor: 0, // player angle captured at spawn (set live)
+      anchored: false,
+      theta, // live angle (updated per frame)
       statusId,
       amount: opts.amount ?? 1,
       size: opts.size ?? 1,
@@ -235,7 +246,7 @@ function RailWorld({
   useMemo(() => {
     for (const orb of orbs) {
       const center = curve.getPointAt(THREE.MathUtils.clamp(orb.t, 0, 1));
-      offsetDir(orb.t, orb.theta * ANG, tmpDir).multiplyScalar(WORLD_R);
+      offsetDir(orb.t, orb.theta * ANG, tmpDir).multiplyScalar(WORLD_R + ORB_HOVER);
       orb.pos = center.clone().add(tmpDir);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -307,12 +318,29 @@ function RailWorld({
       const g = orb.ref?.current;
       if (!g) continue;
       const ahead = orb.t - ps.t;
-      const vis = !orb.consumed && ahead < AHEAD_WINDOW_T && orb.t > ps.t - 0.012;
+      if (orb.consumed) {
+        g.visible = false;
+        continue;
+      }
+      // Spawn: the first time an orb comes into reach, anchor its formation to
+      // the player's CURRENT angle, so it lands in its intended spot relative to
+      // wherever the player is on the plain.
+      if (!orb.anchored) {
+        if (ahead <= AHEAD_WINDOW_T && ahead > -0.02) {
+          orb.anchor = ps.theta;
+          orb.anchored = true;
+        } else {
+          g.visible = false;
+          continue;
+        }
+      }
+      const vis = ahead < AHEAD_WINDOW_T && orb.t > ps.t - 0.012;
       g.visible = vis;
       if (!vis) continue;
       orb.theta = orbThetaAt(orb, time);
       curve.getPointAt(orb.t, vOrbC);
-      offsetDir(orb.t, orb.theta * ANG, vOrbD).multiplyScalar(WORLD_R);
+      // radius WORLD_R + ORB_HOVER => the orb floats just above the plain.
+      offsetDir(orb.t, orb.theta * ANG, vOrbD).multiplyScalar(WORLD_R + ORB_HOVER);
       orb.pos.copy(vOrbC).add(vOrbD);
       g.position.copy(orb.pos);
       g.rotation.y += 0.04;
@@ -321,7 +349,7 @@ function RailWorld({
 
     // --- collisions: orb crossed this frame within the angular tolerance ---
     for (const orb of orbs) {
-      if (orb.consumed) continue;
+      if (orb.consumed || !orb.anchored) continue;
       if (prevT < orb.t && orb.t <= ps.t) {
         if (angDiff(ps.theta, orb.theta) < COLLIDE_ANGLE) {
           orb.consumed = true;
@@ -407,7 +435,7 @@ function pickPrimaryTarget(orbs, ps) {
   let best = null;
   let bestDt = Infinity;
   for (const orb of orbs) {
-    if (orb.consumed) continue;
+    if (orb.consumed || !orb.anchored) continue;
     const dt = orb.t - ps.t;
     if (dt <= 0 || dt > AIM_WINDOW_T) continue;
     if (angDiff(ps.theta, orb.theta) > AIM_CONE) continue;
@@ -422,7 +450,7 @@ function pickPrimaryTarget(orbs, ps) {
 // All valid Targets for a Hyperfocus-boosted Shatter: the whole incoming band.
 function pickRepeatTargets(orbs, ps) {
   return orbs.filter((orb) => {
-    if (orb.consumed) return false;
+    if (orb.consumed || !orb.anchored) return false;
     const dt = orb.t - ps.t;
     return dt > 0 && dt <= REPEAT_WINDOW_T;
   });
@@ -436,9 +464,9 @@ function GroundRibbon({ curveData }) {
   const { curve, frames } = curveData;
   const geom = useMemo(() => {
     const NL = 420; // segments along the rail
-    const NW = 16; // segments across the plain
-    const halfW = 0.55; // half-width of the plain, in ACTUAL (world) radians
-    const centerA = Math.PI * ANG; // center the plain near the orb sector
+    const NW = 20; // segments across the plain
+    const halfW = 0.75; // half-width of the plain, in ACTUAL (world) radians
+    const centerA = 0; // centered on the player's working area
     const positions = [];
     const uvs = [];
     const tmp = new THREE.Vector3();
@@ -562,7 +590,9 @@ function buildBeatOrbs(beats, duration) {
   return beats.map((b, id) => ({
     id,
     t: Math.min(0.999, b.time / duration),
-    theta0: b.theta,
+    rel: b.theta,
+    anchor: 0,
+    anchored: false,
     theta: b.theta,
     statusId: b.statusId,
     amount: 1,
