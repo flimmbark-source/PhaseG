@@ -43,10 +43,18 @@ The intended question is: *given the condition I'm in, what can I do with it?*
 - `F` — **Shatter** (destroys an open eye) · `G` — **Hyperfocus**
 
 **Rail (third-person, real-time)**
+- On entry, choose a mode: **load a track** (mp3/wav/ogg) to grind to its beat,
+  or **use the default handcrafted rail**.
 - `A` / `D` — rotate around the rail's circumference
 - `SPACE` — **Shatter** the aimed orb · `SHIFT` — **Hyperfocus**
 - Hyperfocus **then** Shatter → Shatter repeats across the whole incoming band
 - Collide with orbs on purpose to shape your build; dodge when your bar is full
+
+**Music mode:** the track is analyzed up front (Web Audio) for beats; orbs are
+placed so they **arrive on the beat**, their type follows the music's brightness
+(bass → Anxiety, mid → Calm, bright → Focus), and the rail **ends when the song
+ends**. Everything else (HP, Statuses, cooldowns, Shatter/Hyperfocus) is
+identical to the default rail — it's just a different orb scheduler.
 
 **Anywhere:** the **Compendium** button (top-right) lists discovered abilities.
 

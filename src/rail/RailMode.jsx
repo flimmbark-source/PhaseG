@@ -20,6 +20,7 @@ import { STATUS_DEFS } from '../data/statuses.js';
 import { useKeys } from '../systems/useKeys.js';
 import { projectToScreen } from '../systems/screenProject.js';
 import Projector from '../systems/Projector.jsx';
+import { analyzeTrack } from './beatAnalysis.js';
 import HUD from '../ui/HUD.jsx';
 
 // ---- tuning (PROVISIONAL) ----
@@ -34,6 +35,7 @@ const COLLIDE_ANGLE = 0.55; // angular tolerance for an orb collision (rad)
 const AIM_WINDOW_T = 0.045; // how far ahead the primary Shatter target may be
 const AIM_CONE = 0.8; // angular cone for primary target selection
 const REPEAT_WINDOW_T = 0.075; // Hyperfocus repeat reaches further down the rail
+const AHEAD_WINDOW_T = 0.09; // orbs are only shown/updated within this reach ahead
 const EXIT_T = 0.99; // reaching here enters the second sphere
 
 const HOTKEYS = { shatter: 'SPACE', hyperfocus: 'SHIFT' };
@@ -160,7 +162,17 @@ function buildFormations() {
 // Rail world (inside Canvas). All per-frame motion is imperative for smoothness;
 // React state is touched only on discrete events (collisions, cooldown ticks).
 // ---------------------------------------------------------------------------
-function RailWorld({ heldKeys, playerStateRef, playerWorldRef, orbs, curveData, onCollide, onReachExit }) {
+function RailWorld({
+  heldKeys,
+  playerStateRef,
+  playerWorldRef,
+  orbs,
+  curveData,
+  onCollide,
+  onReachExit,
+  musicMode = false,
+  getMusicProgress,
+}) {
   const applyStatusTick = useGameStore((s) => s.tickCooldowns);
   const playerRef = useRef();
   const aimRef = useRef();
@@ -213,8 +225,15 @@ function RailWorld({ heldKeys, playerStateRef, playerWorldRef, orbs, curveData, 
     const ps = playerStateRef.current;
 
     // --- advance forward ---
+    // Music mode ties progress to the song clock (so the rail ends exactly when
+    // the track does); otherwise it advances at a fixed grind speed.
     const prevT = ps.t;
-    ps.t = Math.min(1, ps.t + RAIL_SPEED * dt);
+    if (musicMode && getMusicProgress) {
+      ps.t = Math.min(1, Math.max(ps.t, getMusicProgress()));
+    } else {
+      ps.t = Math.min(1, ps.t + RAIL_SPEED * dt);
+    }
+    const exitT = musicMode ? 0.999 : EXIT_T;
 
     // --- rotate around the rail ---
     const k = heldKeys.current;
@@ -246,15 +265,22 @@ function RailWorld({ heldKeys, playerStateRef, playerWorldRef, orbs, curveData, 
     vLook.copy(vCenter).add(vDir);
     state.camera.lookAt(vLook);
 
-    // --- move orbs: update live angle + world position for this frame ---
+    // --- move + cull orbs: only those within reach ahead are shown/updated ---
     const time = state.clock.elapsedTime;
     for (const orb of orbs) {
-      if (orb.consumed) continue;
+      const g = orb.ref?.current;
+      if (!g) continue;
+      const ahead = orb.t - ps.t;
+      const vis = !orb.consumed && ahead < AHEAD_WINDOW_T && orb.t > ps.t - 0.012;
+      g.visible = vis;
+      if (!vis) continue;
       orb.theta = orbThetaAt(orb, time);
       curve.getPointAt(orb.t, vOrbC);
       offsetDir(orb.t, orb.theta, vOrbD).multiplyScalar(PLAYER_R);
       orb.pos.copy(vOrbC).add(vOrbD);
-      if (orb.ref?.current) orb.ref.current.position.copy(orb.pos);
+      g.position.copy(orb.pos);
+      g.rotation.y += 0.04;
+      g.scale.setScalar(orb.size * (1 + Math.sin(time * 4 + orb.id) * 0.08));
     }
 
     // --- collisions: orb crossed this frame within the angular tolerance ---
@@ -266,12 +292,9 @@ function RailWorld({ heldKeys, playerStateRef, playerWorldRef, orbs, curveData, 
           if (orb.ref?.current) orb.ref.current.visible = false;
           onCollide(orb); // apply the Status change (may overflow -> HP)
         } else {
-          // Dodged — mark passed so it can be hidden as it falls behind.
-          orb.passed = true;
+          orb.passed = true; // dodged
         }
       }
-      // Hide orbs that have fallen well behind the camera.
-      if (orb.ref?.current && orb.t < ps.t - 0.012) orb.ref.current.visible = false;
     }
     prevTRef.current = ps.t;
 
@@ -293,8 +316,8 @@ function RailWorld({ heldKeys, playerStateRef, playerWorldRef, orbs, curveData, 
       cdAccum.current = 0;
     }
 
-    // --- reached the second sphere ---
-    if (!exitedRef.current && ps.t >= EXIT_T) {
+    // --- reached the second sphere (song end in music mode) ---
+    if (!exitedRef.current && ps.t >= exitT) {
       exitedRef.current = true;
       onReachExit();
     }
@@ -431,19 +454,14 @@ function StarField() {
   );
 }
 
+// Dumb orb mesh — position / rotation / scale / visibility are all driven by
+// the RailWorld frame loop (so hundreds of beat orbs stay cheap: one loop, not
+// one useFrame per orb).
 function Orb({ orb }) {
   const def = STATUS_DEFS[orb.statusId];
   const moving = orb.motion && orb.motion.type !== 'static';
   const ref = useRef();
   orb.ref = ref;
-  // Position is driven by the RailWorld frame loop; here we just spin + pulse.
-  useFrame((s) => {
-    if (ref.current && ref.current.visible) {
-      ref.current.rotation.y += moving ? 0.05 : 0.03;
-      const p = 1 + Math.sin(s.clock.elapsedTime * 4 + orb.id) * 0.08;
-      ref.current.scale.setScalar(orb.size * p);
-    }
-  });
   return (
     <group ref={ref} position={orb.pos ? orb.pos.toArray() : [0, 0, 0]}>
       <mesh>
@@ -467,6 +485,22 @@ function Orb({ orb }) {
   );
 }
 
+// Convert analyzed beats into orbs. Each orb sits at the rail-progress the
+// player will occupy at that beat's time, so it ARRIVES on the beat.
+function buildBeatOrbs(beats, duration) {
+  return beats.map((b, id) => ({
+    id,
+    t: Math.min(0.999, b.time / duration),
+    theta0: b.theta,
+    theta: b.theta,
+    statusId: b.statusId,
+    amount: 1,
+    size: b.size ?? 1,
+    motion: { type: 'static' },
+    phase: 0,
+  }));
+}
+
 // ---------------------------------------------------------------------------
 // Mode wrapper.
 // ---------------------------------------------------------------------------
@@ -477,14 +511,23 @@ export default function RailMode() {
   const spawnGlyph = useGameStore((s) => s.spawnGlyph);
   const firePulse = useGameStore((s) => s.firePulse);
 
-  const [fadingIn, setFadingIn] = React.useState(true);
+  // Flow: choose a track (or the default rail), analyze, then play.
+  const [phase, setPhase] = React.useState('select'); // select | analyzing | ready | playing
+  const [trackInfo, setTrackInfo] = React.useState(null);
+  const [error, setError] = React.useState(null);
+  const [musicMode, setMusicMode] = React.useState(false);
+  const [orbs, setOrbs] = React.useState(null);
+  const [fadingIn, setFadingIn] = React.useState(false);
   const [fadingOut, setFadingOut] = React.useState(false);
 
-  // Fade in from the sphere on arrival.
-  useEffect(() => {
-    const t = setTimeout(() => setFadingIn(false), 60);
-    return () => clearTimeout(t);
-  }, []);
+  // Web Audio playback state (music mode).
+  const audioCtxRef = useRef(null);
+  const bufferRef = useRef(null);
+  const beatsRef = useRef(null);
+  const durationRef = useRef(0);
+  const startTimeRef = useRef(0);
+  const sourceRef = useRef(null);
+  const exitingRef = useRef(false);
 
   // Curve + frenet frames, built once.
   const curveData = useMemo(() => {
@@ -498,9 +541,31 @@ export default function RailMode() {
     return { curve, frames };
   }, []);
 
-  const orbs = useMemo(() => buildFormations(), []);
   const playerStateRef = useRef({ t: 0, theta: 0 });
   const playerWorldRef = useRef(new THREE.Vector3());
+
+  // Stop audio + close context when leaving the Rail.
+  useEffect(
+    () => () => {
+      try {
+        sourceRef.current?.stop();
+      } catch {
+        /* already stopped */
+      }
+      try {
+        audioCtxRef.current?.close();
+      } catch {
+        /* already closed */
+      }
+    },
+    [],
+  );
+
+  const getMusicProgress = useCallback(() => {
+    const ctx = audioCtxRef.current;
+    if (!ctx || !durationRef.current) return 0;
+    return (ctx.currentTime - startTimeRef.current) / durationRef.current;
+  }, []);
 
   const onCollide = useCallback(
     (orb) => {
@@ -513,6 +578,7 @@ export default function RailMode() {
   // Ability routing: Rail environment adapter. Orbs are the generic Targets.
   const onActivateAbility = useCallback(
     (id) => {
+      if (!orbs) return;
       const ps = playerStateRef.current;
       const hitPositions = []; // world positions of Targets destroyed this activation
       const ctx = {
@@ -549,9 +615,85 @@ export default function RailMode() {
   });
 
   const onReachExit = useCallback(() => {
+    if (exitingRef.current) return;
+    exitingRef.current = true;
+    try {
+      sourceRef.current?.stop();
+    } catch {
+      /* already stopped */
+    }
     setFadingOut(true);
     setTimeout(() => enterSecondSphere(), 700);
   }, [enterSecondSphere]);
+
+  // ---- track selection / analysis / playback ----
+  const onPickFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError(null);
+    setPhase('analyzing');
+    try {
+      const { ctx, buffer, duration, beats } = await analyzeTrack(file);
+      audioCtxRef.current = ctx;
+      bufferRef.current = buffer;
+      durationRef.current = duration;
+      beatsRef.current = beats;
+      setTrackInfo({ name: file.name, duration, beatCount: beats.length });
+      setPhase('ready');
+    } catch {
+      setError('Could not read that audio file. Try another mp3/wav/ogg.');
+      setPhase('select');
+    }
+  };
+
+  const startMusic = async () => {
+    const ctx = audioCtxRef.current;
+    if (!ctx) return;
+    try {
+      await ctx.resume();
+    } catch {
+      /* ignore */
+    }
+    const src = ctx.createBufferSource();
+    src.buffer = bufferRef.current;
+    src.connect(ctx.destination);
+    src.onended = () => onReachExit();
+    src.start();
+    startTimeRef.current = ctx.currentTime;
+    sourceRef.current = src;
+
+    playerStateRef.current = { t: 0, theta: 0 };
+    exitingRef.current = false;
+    setOrbs(buildBeatOrbs(beatsRef.current, durationRef.current));
+    setMusicMode(true);
+    setFadingIn(true);
+    setPhase('playing');
+    setTimeout(() => setFadingIn(false), 60);
+  };
+
+  const useDefaultRail = () => {
+    playerStateRef.current = { t: 0, theta: 0 };
+    exitingRef.current = false;
+    setOrbs(buildFormations());
+    setMusicMode(false);
+    setFadingIn(true);
+    setPhase('playing');
+    setTimeout(() => setFadingIn(false), 60);
+  };
+
+  if (phase !== 'playing') {
+    return (
+      <TrackSelect
+        phase={phase}
+        trackInfo={trackInfo}
+        error={error}
+        onPickFile={onPickFile}
+        onStart={startMusic}
+        onDefault={useDefaultRail}
+        onBack={() => setPhase('select')}
+      />
+    );
+  }
 
   return (
     <div className="canvas-wrap">
@@ -564,12 +706,71 @@ export default function RailMode() {
           curveData={curveData}
           onCollide={onCollide}
           onReachExit={onReachExit}
+          musicMode={musicMode}
+          getMusicProgress={getMusicProgress}
         />
       </Canvas>
 
       <HUD onActivateAbility={onActivateAbility} hotkeys={HOTKEYS} />
 
       <div className="fade" style={{ opacity: fadingIn || fadingOut ? 1 : 0 }} />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Pre-rail track picker. Load an mp3 to grind to its beat, or take the default
+// handcrafted rail.
+// ---------------------------------------------------------------------------
+function TrackSelect({ phase, trackInfo, error, onPickFile, onStart, onDefault, onBack }) {
+  const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  return (
+    <div className="track-select">
+      <div className="panel track-panel">
+        <h2>ENTER THE RAIL</h2>
+        <p className="track-sub">
+          Load a track and the rail becomes its beat — orbs arrive on the beat and the run ends
+          when the song does. Or take the handcrafted rail.
+        </p>
+
+        {phase === 'analyzing' && <div className="track-status">Analyzing beats…</div>}
+
+        {phase === 'ready' && trackInfo && (
+          <div className="track-status">
+            <b>{trackInfo.name}</b>
+            <div className="track-meta">
+              {fmt(trackInfo.duration)} · {trackInfo.beatCount} beats detected
+            </div>
+            <div className="track-actions">
+              <button className="btn primary" onClick={onStart}>
+                Start ▶
+              </button>
+              <button className="btn" onClick={onBack}>
+                Choose different
+              </button>
+            </div>
+          </div>
+        )}
+
+        {(phase === 'select' || phase === 'analyzing') && (
+          <>
+            <label className={`btn track-file ${phase === 'analyzing' ? 'disabled' : ''}`}>
+              ♪ Load a track (mp3 / wav / ogg)
+              <input
+                type="file"
+                accept="audio/*"
+                onChange={onPickFile}
+                disabled={phase === 'analyzing'}
+                style={{ display: 'none' }}
+              />
+            </label>
+            {error && <div className="track-error">{error}</div>}
+            <button className="btn" onClick={onDefault} disabled={phase === 'analyzing'}>
+              Use the default rail →
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 }
