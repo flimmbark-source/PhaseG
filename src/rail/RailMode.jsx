@@ -27,9 +27,16 @@ import HUD from '../ui/HUD.jsx';
 const SEG = 1400; // frenet-frame resolution (higher for the longer curve)
 const RAIL_SPEED = 0.05; // progress per second — ~3x the old rail length in time (~20s)
 const ROT_SPEED = 3.4; // radians / second around the rail
-const PLAYER_R = 1.3; // player orbits ON the rail's surface, around its axis
-const RAIL_CORE_R = 0.32; // thickness of the rail itself (a thin central beam)
-const CAM_R = PLAYER_R + 3.0; // camera sits OUTSIDE the player — over-the-shoulder
+// The rail is a huge, gently-curved "plain". We keep every GAMEPLAY value in its
+// original angular units (rotation, collision, orb spacing all unchanged), but
+// render at a large radius while dividing the angle by SCALE. Because lateral
+// distance = radius * angle = (PLAYER_R*SCALE) * (theta/SCALE) = PLAYER_R*theta,
+// the feel is identical — only the curvature gets gentle. Bigger SCALE = flatter.
+const PLAYER_R = 1.3; // gameplay lateral unit (unchanged feel)
+const SCALE = 18; // how big the plain is; larger = flatter curve
+const ANG = 1 / SCALE; // gameplay angle -> actual (much smaller) world angle
+const WORLD_R = PLAYER_R * SCALE; // actual world radius of the curved plain
+const CAM_GAP = 3.6; // camera height above the plain, in world units
 const CAM_BACK = 0.014; // how far behind the player (in progress units) the camera sits
 const COLLIDE_ANGLE = 0.55; // angular tolerance for an orb collision (rad)
 const AIM_WINDOW_T = 0.045; // how far ahead the primary Shatter target may be
@@ -71,6 +78,28 @@ const CURVE_POINTS = [
 
 function angDiff(a, b) {
   return Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+}
+
+// Rotation-stable frames using a fixed "up" reference. Unlike Frenet frames,
+// these don't flip/twist at the curve's inflection points — essential now that
+// the huge radius would turn any frame twist into a big camera/ground jump. The
+// plain's "up" stays consistent, like a road surface.
+function buildStableFrames(curve, seg) {
+  const tangents = [];
+  const normals = [];
+  const binormals = [];
+  const up = new THREE.Vector3(0, 1, 0);
+  const alt = new THREE.Vector3(1, 0, 0);
+  for (let i = 0; i <= seg; i++) {
+    const tan = curve.getTangentAt(i / seg).normalize();
+    const ref = Math.abs(tan.dot(up)) > 0.9 ? alt : up; // avoid near-parallel
+    const bin = new THREE.Vector3().crossVectors(tan, ref).normalize();
+    const nrm = new THREE.Vector3().crossVectors(bin, tan).normalize();
+    tangents.push(tan);
+    normals.push(nrm);
+    binormals.push(bin);
+  }
+  return { tangents, normals, binormals };
 }
 
 // Current angular position of an orb given its motion type and the clock.
@@ -206,7 +235,7 @@ function RailWorld({
   useMemo(() => {
     for (const orb of orbs) {
       const center = curve.getPointAt(THREE.MathUtils.clamp(orb.t, 0, 1));
-      offsetDir(orb.t, orb.theta, tmpDir).multiplyScalar(PLAYER_R);
+      offsetDir(orb.t, orb.theta * ANG, tmpDir).multiplyScalar(WORLD_R);
       orb.pos = center.clone().add(tmpDir);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -219,6 +248,13 @@ function RailWorld({
   const vLook = useMemo(() => new THREE.Vector3(), []);
   const vOrbC = useMemo(() => new THREE.Vector3(), []);
   const vOrbD = useMemo(() => new THREE.Vector3(), []);
+
+  // Where the player ends up (t=1, angle ~0) — put the second sphere there.
+  const endSpherePos = useMemo(() => {
+    const c = curve.getPointAt(1);
+    const d = offsetDir(1, 0, new THREE.Vector3()).multiplyScalar(WORLD_R);
+    return c.add(d).toArray();
+  }, [curve, offsetDir]);
 
   useFrame((state, dtRaw) => {
     const dt = Math.min(dtRaw, 0.05); // clamp big frame gaps
@@ -240,9 +276,9 @@ function RailWorld({
     if (k['a'] || k['arrowleft']) ps.theta -= ROT_SPEED * dt;
     if (k['d'] || k['arrowright']) ps.theta += ROT_SPEED * dt;
 
-    // --- place player ---
+    // --- place player (huge radius, tiny angle => same lateral position) ---
     curve.getPointAt(ps.t, vCenter);
-    offsetDir(ps.t, ps.theta, vDir).multiplyScalar(PLAYER_R);
+    offsetDir(ps.t, ps.theta * ANG, vDir).multiplyScalar(WORLD_R);
     vPlayer.copy(vCenter).add(vDir);
     if (playerRef.current) {
       playerRef.current.position.copy(vPlayer);
@@ -255,13 +291,13 @@ function RailWorld({
     // little further down the rail so forward motion and oncoming orbs read.
     const camT = Math.max(0, ps.t - CAM_BACK);
     curve.getPointAt(camT, vCenter);
-    offsetDir(camT, ps.theta, vDir).multiplyScalar(CAM_R);
+    offsetDir(camT, ps.theta * ANG, vDir).multiplyScalar(WORLD_R + CAM_GAP);
     vCam.copy(vCenter).add(vDir);
     state.camera.position.lerp(vCam, 1 - Math.pow(0.0008, dt));
 
     const lookT = Math.min(1, ps.t + 0.017);
     curve.getPointAt(lookT, vCenter);
-    offsetDir(lookT, ps.theta, vDir).multiplyScalar(PLAYER_R);
+    offsetDir(lookT, ps.theta * ANG, vDir).multiplyScalar(WORLD_R);
     vLook.copy(vCenter).add(vDir);
     state.camera.lookAt(vLook);
 
@@ -276,7 +312,7 @@ function RailWorld({
       if (!vis) continue;
       orb.theta = orbThetaAt(orb, time);
       curve.getPointAt(orb.t, vOrbC);
-      offsetDir(orb.t, orb.theta, vOrbD).multiplyScalar(PLAYER_R);
+      offsetDir(orb.t, orb.theta * ANG, vOrbD).multiplyScalar(WORLD_R);
       orb.pos.copy(vOrbC).add(vOrbD);
       g.position.copy(orb.pos);
       g.rotation.y += 0.04;
@@ -331,22 +367,22 @@ function RailWorld({
       <pointLight position={[0, 6, -20]} intensity={60} distance={80} color="#b98bff" />
 
       <Projector />
-      <Rail curveData={curveData} />
+      <GroundRibbon curveData={curveData} />
       <StarField />
 
-      {/* second sphere at the end of the rail */}
-      <mesh position={curve.getPointAt(1).toArray()}>
-        <sphereGeometry args={[3.4, 32, 32]} />
+      {/* second sphere at the end of the plain, where the player actually ends up */}
+      <mesh position={endSpherePos}>
+        <sphereGeometry args={[5, 32, 32]} />
         <meshStandardMaterial color="#050208" emissive="#3a1d6e" emissiveIntensity={0.6} />
       </mesh>
 
       {/* player */}
       <group ref={playerRef}>
         <mesh>
-          <icosahedronGeometry args={[0.5, 1]} />
+          <icosahedronGeometry args={[0.7, 1]} />
           <meshStandardMaterial color="#ffffff" emissive="#66e0ff" emissiveIntensity={1.1} />
         </mesh>
-        <pointLight intensity={8} distance={10} color="#88e6ff" />
+        <pointLight intensity={20} distance={22} color="#88e6ff" />
       </group>
 
       {/* orbs */}
@@ -392,34 +428,69 @@ function pickRepeatTargets(orbs, ps) {
   });
 }
 
-// The rail itself: a thin glowing central beam the player grinds along and
-// rotates AROUND. This is a rail in open space — deliberately NOT an enclosing
-// tube. The player and orbs orbit its axis at PLAYER_R.
-function Rail({ curveData }) {
-  const { curve } = curveData;
-  const geo = useMemo(
-    () => new THREE.TubeGeometry(curve, 1100, RAIL_CORE_R, 10, false),
-    [curve],
-  );
-  const glowGeo = useMemo(
-    () => new THREE.TubeGeometry(curve, 1100, RAIL_CORE_R * 2.2, 10, false),
-    [curve],
-  );
+// The rail rendered as a huge, gently-curved ground ribbon: a wide surface that
+// follows the spline at WORLD_R, so the player feels like they're crossing a
+// large curved plain rather than circling a thin pole. A faint wireframe grid
+// on top reveals the curvature.
+function GroundRibbon({ curveData }) {
+  const { curve, frames } = curveData;
+  const geom = useMemo(() => {
+    const NL = 420; // segments along the rail
+    const NW = 16; // segments across the plain
+    const halfW = 0.55; // half-width of the plain, in ACTUAL (world) radians
+    const centerA = Math.PI * ANG; // center the plain near the orb sector
+    const positions = [];
+    const uvs = [];
+    const tmp = new THREE.Vector3();
+    for (let i = 0; i <= NL; i++) {
+      const t = i / NL;
+      const c = curve.getPointAt(t);
+      const fi = Math.min(frames.normals.length - 1, Math.round(t * SEG));
+      const nrm = frames.normals[fi];
+      const bin = frames.binormals[fi];
+      for (let j = 0; j <= NW; j++) {
+        const a = centerA - halfW + 2 * halfW * (j / NW);
+        tmp
+          .copy(nrm)
+          .multiplyScalar(Math.cos(a))
+          .addScaledVector(bin, Math.sin(a))
+          .multiplyScalar(WORLD_R);
+        positions.push(c.x + tmp.x, c.y + tmp.y, c.z + tmp.z);
+        uvs.push(t * 60, j / NW);
+      }
+    }
+    const indices = [];
+    const stride = NW + 1;
+    for (let i = 0; i < NL; i++) {
+      for (let j = 0; j < NW; j++) {
+        const a = i * stride + j;
+        indices.push(a, a + stride, a + 1, a + 1, a + stride, a + stride + 1);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    g.setIndex(indices);
+    g.computeVertexNormals();
+    return g;
+  }, [curve, frames]);
+
   return (
-    <>
-      <mesh geometry={glowGeo}>
-        <meshBasicMaterial color="#7a4fff" transparent opacity={0.12} depthWrite={false} />
-      </mesh>
-      <mesh geometry={geo}>
+    <group>
+      <mesh geometry={geom}>
         <meshStandardMaterial
-          color="#d8c8ff"
-          emissive="#8a5bff"
-          emissiveIntensity={1.1}
-          metalness={0.7}
-          roughness={0.25}
+          color="#221146"
+          emissive="#3a1d6e"
+          emissiveIntensity={0.28}
+          metalness={0.2}
+          roughness={0.85}
+          side={THREE.DoubleSide}
         />
       </mesh>
-    </>
+      <mesh geometry={geom}>
+        <meshBasicMaterial color="#7a4fff" wireframe transparent opacity={0.14} />
+      </mesh>
+    </group>
   );
 }
 
@@ -537,7 +608,7 @@ export default function RailMode() {
       'catmullrom',
       0.5,
     );
-    const frames = curve.computeFrenetFrames(SEG, false);
+    const frames = buildStableFrames(curve, SEG);
     return { curve, frames };
   }, []);
 
