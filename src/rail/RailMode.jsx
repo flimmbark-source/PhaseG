@@ -26,17 +26,18 @@ import HUD from '../ui/HUD.jsx';
 // ---- tuning (PROVISIONAL) ----
 const SEG = 1400; // frenet-frame resolution (higher for the longer curve)
 const RAIL_SPEED = 0.05; // progress per second — ~3x the old rail length in time (~20s)
-const ROT_SPEED = 3.4; // radians / second around the rail
+const ROT_SPEED = 6.5; // radians / second around the rail (snappy bullet-hell dodging)
 // The rail is a huge, gently-curved "plain". We keep every GAMEPLAY value in its
 // original angular units (rotation, collision, orb spacing all unchanged), but
 // render at a large radius while dividing the angle by SCALE. Because lateral
 // distance = radius * angle = (PLAYER_R*SCALE) * (theta/SCALE) = PLAYER_R*theta,
 // the feel is identical — only the curvature gets gentle. Bigger SCALE = flatter.
-const PLAYER_R = 1.3; // gameplay lateral unit (unchanged feel)
-const SCALE = 18; // how big the plain is; larger = flatter curve
+const PLAYER_R = 0.6; // gameplay lateral unit — smaller keeps the orb field TIGHT
+const SCALE = 40; // large radius => big gently-curved plain (independent of field size)
 const ANG = 1 / SCALE; // gameplay angle -> actual (much smaller) world angle
-const WORLD_R = PLAYER_R * SCALE; // actual world radius of the curved plain
-const CAM_GAP = 3.6; // camera height above the plain, in world units
+const WORLD_R = PLAYER_R * SCALE; // actual world radius of the curved plain (~24)
+const PLAYER_LIFT = 1.0; // lift the player up off the plain (out of the "pipe")
+const CAM_GAP = 3.6; // camera height above the player, in world units
 const CAM_BACK = 0.014; // how far behind the player (in progress units) the camera sits
 const COLLIDE_ANGLE = 0.55; // angular tolerance for an orb collision (rad)
 const AIM_WINDOW_T = 0.045; // how far ahead the primary Shatter target may be
@@ -287,9 +288,9 @@ function RailWorld({
     if (k['a'] || k['arrowleft']) ps.theta -= ROT_SPEED * dt;
     if (k['d'] || k['arrowright']) ps.theta += ROT_SPEED * dt;
 
-    // --- place player (huge radius, tiny angle => same lateral position) ---
+    // --- place player (lifted up off the plain, coplanar with the orbs) ---
     curve.getPointAt(ps.t, vCenter);
-    offsetDir(ps.t, ps.theta * ANG, vDir).multiplyScalar(WORLD_R);
+    offsetDir(ps.t, ps.theta * ANG, vDir).multiplyScalar(WORLD_R + PLAYER_LIFT);
     vPlayer.copy(vCenter).add(vDir);
     if (playerRef.current) {
       playerRef.current.position.copy(vPlayer);
@@ -302,13 +303,13 @@ function RailWorld({
     // little further down the rail so forward motion and oncoming orbs read.
     const camT = Math.max(0, ps.t - CAM_BACK);
     curve.getPointAt(camT, vCenter);
-    offsetDir(camT, ps.theta * ANG, vDir).multiplyScalar(WORLD_R + CAM_GAP);
+    offsetDir(camT, ps.theta * ANG, vDir).multiplyScalar(WORLD_R + PLAYER_LIFT + CAM_GAP);
     vCam.copy(vCenter).add(vDir);
     state.camera.position.lerp(vCam, 1 - Math.pow(0.0008, dt));
 
     const lookT = Math.min(1, ps.t + 0.017);
     curve.getPointAt(lookT, vCenter);
-    offsetDir(lookT, ps.theta * ANG, vDir).multiplyScalar(WORLD_R);
+    offsetDir(lookT, ps.theta * ANG, vDir).multiplyScalar(WORLD_R + PLAYER_LIFT);
     vLook.copy(vCenter).add(vDir);
     state.camera.lookAt(vLook);
 
